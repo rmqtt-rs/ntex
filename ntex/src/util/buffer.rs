@@ -1,17 +1,14 @@
 //! Service that buffers incomming requests.
 use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
-use std::convert::Infallible;
-use std::pin::Pin;
-use std::rc::Rc;
 use std::task::{Context, Poll};
-
-use futures::future::{ok, Either, Future, Ready};
-use futures::ready;
+use std::{
+    collections::VecDeque, convert::Infallible, future::Future, pin::Pin, rc::Rc,
+};
 
 use crate::channel::oneshot;
 use crate::service::{IntoService, Service, Transform};
 use crate::task::LocalWaker;
+use crate::util::{Either, Ready};
 
 /// Buffer - service factory for service that can buffer incoming request.
 ///
@@ -56,10 +53,10 @@ where
     type Error = S::Error;
     type InitError = Infallible;
     type Transform = BufferService<S, E>;
-    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+    type Future = Ready<Self::Transform, Self::InitError>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ok(BufferService {
+        Ready::Ok(BufferService {
             size: self.buf_size,
             inner: Rc::new(Inner {
                 service,
@@ -223,7 +220,10 @@ impl<S: Service<Error = E>, E> Future for BufferServiceResponse<S, E> {
                     Poll::Pending => return Poll::Pending,
                 },
                 StateProject::Srv { fut, inner } => {
-                    let res = ready!(fut.poll(cx));
+                    let res = match fut.poll(cx) {
+                        Poll::Ready(res) => res,
+                        Poll::Pending => return Poll::Pending,
+                    };
                     inner.waker.wake();
                     return Poll::Ready(res);
                 }
@@ -238,7 +238,7 @@ mod tests {
 
     use super::*;
     use crate::service::{apply, fn_factory, Service, ServiceFactory};
-    use futures::future::{lazy, ok, Ready};
+    use crate::util::lazy;
 
     #[derive(Clone)]
     struct TestService(Rc<Inner>);
@@ -253,7 +253,7 @@ mod tests {
         type Request = ();
         type Response = ();
         type Error = ();
-        type Future = Ready<Result<(), ()>>;
+        type Future = Ready<(), ()>;
 
         fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
             self.0.waker.register(cx.waker());
@@ -267,7 +267,7 @@ mod tests {
         fn call(&self, _: ()) -> Self::Future {
             self.0.ready.set(false);
             self.0.count.set(self.0.count.get() + 1);
-            ok::<_, ()>(())
+            Ready::Ok(())
         }
     }
 
@@ -329,7 +329,7 @@ mod tests {
 
         let srv = apply(
             Buffer::new(|| ()).buf_size(2).clone(),
-            fn_factory(|| ok(TestService(inner.clone()))),
+            fn_factory(|| async { Ok(TestService(inner.clone())) }),
         );
 
         let srv = srv.new_service(&()).await.unwrap();

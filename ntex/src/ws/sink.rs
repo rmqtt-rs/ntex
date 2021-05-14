@@ -1,6 +1,6 @@
 use std::{future::Future, rc::Rc};
 
-use crate::framed::State;
+use crate::framed::{OnDisconnect, State};
 use crate::ws;
 
 pub struct WsSink(Rc<WsSinkInner>);
@@ -15,6 +15,7 @@ impl WsSink {
         Self(Rc::new(WsSinkInner { state, codec }))
     }
 
+    /// Endcode and send message to the peer.
     pub fn send(
         &self,
         item: ws::Message,
@@ -22,8 +23,13 @@ impl WsSink {
         let inner = self.0.clone();
 
         async move {
-            inner.state.write_item(item, &inner.codec)?;
+            inner.state.write().encode(item, &inner.codec)?;
             Ok(())
         }
+    }
+
+    /// Notify when connection get disconnected
+    pub fn on_disconnect(&self) -> OnDisconnect {
+        self.0.state.on_disconnect()
     }
 }

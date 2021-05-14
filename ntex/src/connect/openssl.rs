@@ -1,13 +1,13 @@
-use std::{io, pin::Pin, task::Context, task::Poll};
+use std::{future::Future, io, pin::Pin, task::Context, task::Poll};
 
-use futures::future::{ok, Future, FutureExt, LocalBoxFuture, Ready};
 pub use open_ssl::ssl::{Error as SslError, HandshakeError, SslConnector, SslMethod};
 pub use tokio_openssl::SslStream;
 
 use crate::rt::net::TcpStream;
 use crate::service::{Service, ServiceFactory};
+use crate::util::Ready;
 
-use super::{Address, Connect, ConnectError, Connector, DnsResolver};
+use super::{Address, Connect, ConnectError, Connector};
 
 pub struct OpensslConnector<T> {
     connector: Connector<T>,
@@ -19,14 +19,6 @@ impl<T> OpensslConnector<T> {
     pub fn new(connector: SslConnector) -> Self {
         OpensslConnector {
             connector: Connector::default(),
-            openssl: connector,
-        }
-    }
-
-    /// Construct new connect service with custom dns resolver
-    pub fn with_resolver(connector: SslConnector, resolver: DnsResolver) -> Self {
-        OpensslConnector {
-            connector: Connector::new(resolver),
             openssl: connector,
         }
     }
@@ -91,10 +83,10 @@ impl<T: Address + 'static> ServiceFactory for OpensslConnector<T> {
     type Config = ();
     type Service = OpensslConnector<T>;
     type InitError = ();
-    type Future = Ready<Result<Self::Service, Self::InitError>>;
+    type Future = Ready<Self::Service, Self::InitError>;
 
     fn new_service(&self, _: ()) -> Self::Future {
-        ok(self.clone())
+        Ready::Ok(self.clone())
     }
 }
 
@@ -102,7 +94,7 @@ impl<T: Address + 'static> Service for OpensslConnector<T> {
     type Request = Connect<T>;
     type Response = SslStream<TcpStream>;
     type Error = ConnectError;
-    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
     #[inline]
     fn poll_ready(&self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -110,7 +102,7 @@ impl<T: Address + 'static> Service for OpensslConnector<T> {
     }
 
     fn call(&self, req: Connect<T>) -> Self::Future {
-        self.connect(req).boxed_local()
+        Box::pin(self.connect(req))
     }
 }
 

@@ -1,17 +1,13 @@
-use std::cell::{Ref, RefCell, RefMut};
-use std::rc::Rc;
-use std::{fmt, net};
-
-use futures::future::{ok, Ready};
+use std::{cell::Ref, cell::RefCell, cell::RefMut, fmt, net, rc::Rc};
 
 use crate::http::{
     HeaderMap, HttpMessage, Message, Method, Payload, RequestHead, Uri, Version,
 };
 use crate::router::Path;
-use crate::util::Extensions;
+use crate::util::{Extensions, Ready};
 
 use super::config::AppConfig;
-use super::error::{ErrorRenderer, UrlGenerationError};
+use super::error::ErrorRenderer;
 use super::extract::FromRequest;
 use super::info::ConnectionInfo;
 use super::rmap::ResourceMap;
@@ -137,6 +133,7 @@ impl HttpRequest {
         self.head().extensions_mut()
     }
 
+    #[cfg(feature = "url")]
     /// Generate url for named resource
     ///
     /// ```rust
@@ -159,7 +156,7 @@ impl HttpRequest {
         &self,
         name: &str,
         elements: U,
-    ) -> Result<url::Url, UrlGenerationError>
+    ) -> Result<url_pkg::Url, super::error::UrlGenerationError>
     where
         U: IntoIterator<Item = I>,
         I: AsRef<str>,
@@ -167,11 +164,15 @@ impl HttpRequest {
         self.0.rmap.url_for(&self, name, elements)
     }
 
+    #[cfg(feature = "url")]
     /// Generate url for named resource
     ///
     /// This method is similar to `HttpRequest::url_for()` but it can be used
     /// for urls that do not contain variable parts.
-    pub fn url_for_static(&self, name: &str) -> Result<url::Url, UrlGenerationError> {
+    pub fn url_for_static(
+        &self,
+        name: &str,
+    ) -> Result<url_pkg::Url, super::error::UrlGenerationError> {
         const NO_PARAMS: [&str; 0] = [];
         self.url_for(name, &NO_PARAMS)
     }
@@ -263,9 +264,8 @@ impl Drop for HttpRequest {
 ///
 /// ```rust
 /// use ntex::web::{self, App, HttpRequest};
-/// use serde_derive::Deserialize;
 ///
-/// /// extract `Thing` from request
+/// /// extract `HttpRequest` from request
 /// async fn index(req: HttpRequest) -> String {
 ///    format!("Got thing: {:?}", req)
 /// }
@@ -279,11 +279,11 @@ impl Drop for HttpRequest {
 /// ```
 impl<Err: ErrorRenderer> FromRequest<Err> for HttpRequest {
     type Error = Err::Container;
-    type Future = Ready<Result<Self, Self::Error>>;
+    type Future = Ready<Self, Self::Error>;
 
     #[inline]
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
-        ok(req.clone())
+        Ok(req.clone()).into()
     }
 }
 
@@ -336,8 +336,6 @@ impl HttpRequestPool {
 
 #[cfg(test)]
 mod tests {
-    use futures::future::ready;
-
     use super::*;
     use crate::http::{header, StatusCode};
     use crate::router::ResourceDef;
@@ -398,6 +396,7 @@ mod tests {
         assert_eq!(req.query_string(), "id=test");
     }
 
+    #[cfg(feature = "url")]
     #[test]
     fn test_url_for() {
         let mut res = ResourceDef::new("/user/{name}.{ext}");
@@ -414,11 +413,11 @@ mod tests {
 
         assert_eq!(
             req.url_for("unknown", &["test"]),
-            Err(UrlGenerationError::ResourceNotFound)
+            Err(crate::web::error::UrlGenerationError::ResourceNotFound)
         );
         assert_eq!(
             req.url_for("index", &["test"]),
-            Err(UrlGenerationError::NotEnoughElements)
+            Err(crate::web::error::UrlGenerationError::NotEnoughElements)
         );
         let url = req.url_for("index", &["test", "html"]);
         assert_eq!(
@@ -427,6 +426,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "url")]
     #[test]
     fn test_url_for_static() {
         let mut rdef = ResourceDef::new("/index.html");
@@ -448,6 +448,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "url")]
     #[test]
     fn test_url_for_external() {
         let mut rdef = ResourceDef::new("https://youtube.com/watch/{video_id}");
@@ -469,12 +470,12 @@ mod tests {
     #[crate::rt_test]
     async fn test_data() {
         let srv = init_service(App::new().app_data(10usize).service(
-            web::resource("/").to(|req: HttpRequest| {
-                ready(if req.app_data::<usize>().is_some() {
+            web::resource("/").to(|req: HttpRequest| async move {
+                if req.app_data::<usize>().is_some() {
                     HttpResponse::Ok()
                 } else {
                     HttpResponse::BadRequest()
-                })
+                }
             }),
         ))
         .await;
@@ -521,7 +522,7 @@ mod tests {
                     req.extensions_mut().insert(Foo {
                         tracker: Rc::clone(&tracker2),
                     });
-                    ready(HttpResponse::Ok())
+                    async { HttpResponse::Ok() }
                 }),
             ))
             .await;

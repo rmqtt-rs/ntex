@@ -2,12 +2,11 @@
 
 use std::{fmt, ops};
 
-use futures::future::{err, ok, Ready};
 use serde::de;
 
-use crate::http::Payload;
 use crate::web::error::{ErrorRenderer, QueryPayloadError};
 use crate::web::{FromRequest, HttpRequest};
+use crate::{http::Payload, util::Ready};
 
 /// Extract typed information from the request's query.
 ///
@@ -21,15 +20,14 @@ use crate::web::{FromRequest, HttpRequest};
 ///
 /// ```rust
 /// use ntex::web;
-/// use serde_derive::Deserialize;
 ///
-/// #[derive(Debug, Deserialize)]
+/// #[derive(Debug, serde::Deserialize)]
 /// pub enum ResponseType {
 ///    Token,
 ///    Code
 /// }
 ///
-/// #[derive(Deserialize)]
+/// #[derive(serde::Deserialize)]
 /// pub struct AuthRequest {
 ///    id: u64,
 ///    response_type: ResponseType,
@@ -99,15 +97,14 @@ impl<T: fmt::Display> fmt::Display for Query<T> {
 ///
 /// ```rust
 /// use ntex::web;
-/// use serde_derive::Deserialize;
 ///
-/// #[derive(Debug, Deserialize)]
+/// #[derive(Debug, serde::Deserialize)]
 /// pub enum ResponseType {
 ///    Token,
 ///    Code
 /// }
 ///
-/// #[derive(Deserialize)]
+/// #[derive(serde::Deserialize)]
 /// pub struct AuthRequest {
 ///    id: u64,
 ///    response_type: ResponseType,
@@ -132,12 +129,12 @@ where
     Err: ErrorRenderer,
 {
     type Error = QueryPayloadError;
-    type Future = Ready<Result<Self, Self::Error>>;
+    type Future = Ready<Self, Self::Error>;
 
     #[inline]
     fn from_request(req: &HttpRequest, _: &mut Payload) -> Self::Future {
         serde_urlencoded::from_str::<T>(req.query_string())
-            .map(|val| ok(Query(val)))
+            .map(|val| Ready::Ok(Query(val)))
             .unwrap_or_else(move |e| {
                 let e = QueryPayloadError::Deserialize(e);
 
@@ -146,7 +143,7 @@ where
                      Request path: {:?}",
                     req.path()
                 );
-                err(e)
+                Ready::Err(e)
             })
     }
 }
@@ -154,12 +151,11 @@ where
 #[cfg(test)]
 mod tests {
     use derive_more::Display;
-    use serde_derive::Deserialize;
 
     use super::*;
     use crate::web::test::{from_request, TestRequest};
 
-    #[derive(Deserialize, Debug, Display)]
+    #[derive(serde::Deserialize, Debug, Display)]
     struct Id {
         id: String,
     }

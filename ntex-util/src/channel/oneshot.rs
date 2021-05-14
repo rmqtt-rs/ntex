@@ -1,11 +1,7 @@
 //! A one-shot, futures-aware channel.
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::{future::Future, pin::Pin, task::Context, task::Poll};
 
-pub use futures::channel::oneshot::Canceled;
-
-use super::cell::Cell;
+use super::{cell::Cell, Canceled};
 use crate::task::LocalWaker;
 
 /// Creates a new futures-aware, one-shot channel.
@@ -105,9 +101,9 @@ impl<T> Future for Receiver<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::future::lazy;
+    use crate::future::lazy;
 
-    #[crate::rt_test]
+    #[ntex::test]
     async fn test_oneshot() {
         let (tx, rx) = channel();
         tx.send("test").unwrap();

@@ -2,16 +2,11 @@
 //!
 //! If the response does not complete within the specified timeout, the response
 //! will be aborted.
-use std::future::Future;
-use std::marker::PhantomData;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::{fmt, time};
-
-use futures::future::{ok, Either, Ready};
+use std::{fmt, future::Future, marker, pin::Pin, task::Context, task::Poll, time};
 
 use crate::rt::time::{sleep, Sleep};
 use crate::service::{IntoService, Service, Transform};
+use crate::util::{Either, Ready};
 
 const ZERO: time::Duration = time::Duration::from_millis(0);
 
@@ -21,7 +16,7 @@ const ZERO: time::Duration = time::Duration::from_millis(0);
 #[derive(Debug)]
 pub struct Timeout<E = ()> {
     timeout: time::Duration,
-    _t: PhantomData<E>,
+    _t: marker::PhantomData<E>,
 }
 
 /// Timeout error
@@ -75,7 +70,7 @@ impl<E> Timeout<E> {
     pub fn new(timeout: time::Duration) -> Self {
         Timeout {
             timeout,
-            _t: PhantomData,
+            _t: marker::PhantomData,
         }
     }
 }
@@ -95,10 +90,10 @@ where
     type Error = TimeoutError<S::Error>;
     type InitError = E;
     type Transform = TimeoutService<S>;
-    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+    type Future = Ready<Self::Transform, Self::InitError>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ok(TimeoutService {
+        Ready::Ok(TimeoutService {
             service,
             timeout: self.timeout,
         })
@@ -223,12 +218,12 @@ where
 #[cfg(test)]
 mod tests {
     use derive_more::Display;
-    use futures::future::{lazy, ok, FutureExt, LocalBoxFuture};
     use std::task::{Context, Poll};
     use std::time::Duration;
 
     use super::*;
     use crate::service::{apply, fn_factory, Service, ServiceFactory};
+    use crate::util::lazy;
 
     #[derive(Clone, Debug, PartialEq)]
     struct SleepService(Duration);
@@ -240,7 +235,7 @@ mod tests {
         type Request = ();
         type Response = ();
         type Error = SrvError;
-        type Future = LocalBoxFuture<'static, Result<(), SrvError>>;
+        type Future = Pin<Box<dyn Future<Output = Result<(), SrvError>>>>;
 
         fn poll_ready(&self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
             Poll::Ready(Ok(()))
@@ -255,9 +250,11 @@ mod tests {
         }
 
         fn call(&self, _: ()) -> Self::Future {
-            crate::rt::time::sleep(self.0)
-                .then(|_| ok::<_, SrvError>(()))
-                .boxed_local()
+            let fut = crate::rt::time::sleep(self.0);
+            Box::pin(async move {
+                let _ = fut.await;
+                Ok::<_, SrvError>(())
+            })
         }
     }
 
@@ -302,7 +299,7 @@ mod tests {
 
         let timeout = apply(
             Timeout::new(resolution).clone(),
-            fn_factory(|| ok::<_, ()>(SleepService(wait_time))),
+            fn_factory(|| async { Ok::<_, ()>(SleepService(wait_time)) }),
         );
         let srv = timeout.new_service(&()).await.unwrap();
 

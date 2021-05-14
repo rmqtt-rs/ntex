@@ -1,16 +1,13 @@
 //! Payload/Bytes/String extractors
-use std::future::Future;
-use std::pin::Pin;
-use std::str;
-use std::task::{Context, Poll};
+use std::{future::Future, pin::Pin, str, task::Context, task::Poll};
 
 use bytes::{Bytes, BytesMut};
 use encoding_rs::UTF_8;
-use futures::future::{err, ok, Either, FutureExt, LocalBoxFuture, Ready};
-use futures::{Stream, StreamExt};
+use futures_core::Stream;
 use mime::Mime;
 
 use crate::http::{error, header, HttpMessage};
+use crate::util::{next, Either, Ready};
 use crate::web::error::{ErrorRenderer, PayloadError};
 use crate::web::{FromRequest, HttpRequest};
 
@@ -20,14 +17,14 @@ use crate::web::{FromRequest, HttpRequest};
 ///
 /// ```rust
 /// use bytes::BytesMut;
-/// use futures::{Future, Stream, StreamExt};
+/// use futures::{Future, Stream};
 /// use ntex::web::{self, error, App, HttpResponse};
 ///
 /// /// extract binary data from request
 /// async fn index(mut body: web::types::Payload) -> Result<HttpResponse, error::PayloadError>
 /// {
 ///     let mut bytes = BytesMut::new();
-///     while let Some(item) = body.next().await {
+///     while let Some(item) = ntex::util::next(&mut body).await {
 ///         bytes.extend_from_slice(&item?);
 ///     }
 ///
@@ -70,14 +67,14 @@ impl Stream for Payload {
 ///
 /// ```rust
 /// use bytes::BytesMut;
-/// use futures::{Future, Stream, StreamExt};
+/// use futures::{Future, Stream};
 /// use ntex::web::{self, error, App, Error, HttpResponse};
 ///
 /// /// extract binary data from request
 /// async fn index(mut body: web::types::Payload) -> Result<HttpResponse, error::PayloadError>
 /// {
 ///     let mut bytes = BytesMut::new();
-///     while let Some(item) = body.next().await {
+///     while let Some(item) = ntex::util::next(&mut body).await {
 ///         bytes.extend_from_slice(&item?);
 ///     }
 ///
@@ -94,14 +91,14 @@ impl Stream for Payload {
 /// ```
 impl<Err: ErrorRenderer> FromRequest<Err> for Payload {
     type Error = Err::Container;
-    type Future = Ready<Result<Payload, Self::Error>>;
+    type Future = Ready<Payload, Self::Error>;
 
     #[inline]
     fn from_request(
         _: &HttpRequest,
         payload: &mut crate::http::Payload,
     ) -> Self::Future {
-        ok(Payload(payload.take()))
+        Ready::Ok(Payload(payload.take()))
     }
 }
 
@@ -133,8 +130,8 @@ impl<Err: ErrorRenderer> FromRequest<Err> for Payload {
 impl<Err: ErrorRenderer> FromRequest<Err> for Bytes {
     type Error = PayloadError;
     type Future = Either<
-        LocalBoxFuture<'static, Result<Bytes, Self::Error>>,
-        Ready<Result<Bytes, Self::Error>>,
+        Pin<Box<dyn Future<Output = Result<Bytes, Self::Error>>>>,
+        Ready<Bytes, Self::Error>,
     >;
 
     #[inline]
@@ -151,12 +148,12 @@ impl<Err: ErrorRenderer> FromRequest<Err> for Bytes {
         };
 
         if let Err(e) = cfg.check_mimetype(req) {
-            return Either::Right(err(e));
+            return Either::Right(Ready::Err(e));
         }
 
         let limit = cfg.limit;
         let fut = HttpMessageBody::new(req, payload).limit(limit);
-        Either::Left(async move { fut.await }.boxed_local())
+        Either::Left(Box::pin(async move { fut.await }))
     }
 }
 
@@ -190,8 +187,8 @@ impl<Err: ErrorRenderer> FromRequest<Err> for Bytes {
 impl<Err: ErrorRenderer> FromRequest<Err> for String {
     type Error = PayloadError;
     type Future = Either<
-        LocalBoxFuture<'static, Result<String, Self::Error>>,
-        Ready<Result<String, Self::Error>>,
+        Pin<Box<dyn Future<Output = Result<String, Self::Error>>>>,
+        Ready<String, Self::Error>,
     >;
 
     #[inline]
@@ -209,34 +206,31 @@ impl<Err: ErrorRenderer> FromRequest<Err> for String {
 
         // check content-type
         if let Err(e) = cfg.check_mimetype(req) {
-            return Either::Right(err(e));
+            return Either::Right(Ready::Err(e));
         }
 
         // check charset
         let encoding = match req.encoding() {
             Ok(enc) => enc,
-            Err(e) => return Either::Right(err(PayloadError::from(e))),
+            Err(e) => return Either::Right(Ready::Err(PayloadError::from(e))),
         };
         let limit = cfg.limit;
         let fut = HttpMessageBody::new(req, payload).limit(limit);
 
-        Either::Left(
-            async move {
-                let body = fut.await?;
+        Either::Left(Box::pin(async move {
+            let body = fut.await?;
 
-                if encoding == UTF_8 {
-                    Ok(str::from_utf8(body.as_ref())
-                        .map_err(|_| PayloadError::Decoding)?
-                        .to_owned())
-                } else {
-                    Ok(encoding
-                        .decode_without_bom_handling_and_without_replacement(&body)
-                        .map(|s| s.into_owned())
-                        .ok_or(PayloadError::Decoding)?)
-                }
+            if encoding == UTF_8 {
+                Ok(str::from_utf8(body.as_ref())
+                    .map_err(|_| PayloadError::Decoding)?
+                    .to_owned())
+            } else {
+                Ok(encoding
+                    .decode_without_bom_handling_and_without_replacement(&body)
+                    .map(|s| s.into_owned())
+                    .ok_or(PayloadError::Decoding)?)
             }
-            .boxed_local(),
-        )
+        }))
     }
 }
 /// Payload configuration for request's payload.
@@ -315,7 +309,7 @@ struct HttpMessageBody {
     #[cfg(not(feature = "compress"))]
     stream: Option<crate::http::Payload>,
     err: Option<PayloadError>,
-    fut: Option<LocalBoxFuture<'static, Result<Bytes, PayloadError>>>,
+    fut: Option<Pin<Box<dyn Future<Output = Result<Bytes, PayloadError>>>>>,
 }
 
 impl HttpMessageBody {
@@ -395,22 +389,19 @@ impl Future for HttpMessageBody {
         // future
         let limit = self.limit;
         let mut stream = self.stream.take().unwrap();
-        self.fut = Some(
-            async move {
-                let mut body = BytesMut::with_capacity(8192);
+        self.fut = Some(Box::pin(async move {
+            let mut body = BytesMut::with_capacity(8192);
 
-                while let Some(item) = stream.next().await {
-                    let chunk = item?;
-                    if body.len() + chunk.len() > limit {
-                        return Err(PayloadError::from(error::PayloadError::Overflow));
-                    } else {
-                        body.extend_from_slice(&chunk);
-                    }
+            while let Some(item) = next(&mut stream).await {
+                let chunk = item?;
+                if body.len() + chunk.len() > limit {
+                    return Err(PayloadError::from(error::PayloadError::Overflow));
+                } else {
+                    body.extend_from_slice(&chunk);
                 }
-                Ok(body.freeze())
             }
-            .boxed_local(),
-        );
+            Ok(body.freeze())
+        }));
         self.poll(cx)
     }
 }
@@ -418,7 +409,6 @@ impl Future for HttpMessageBody {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use futures::StreamExt;
 
     use super::*;
     use crate::http::header;
@@ -452,7 +442,7 @@ mod tests {
             .await
             .unwrap()
             .into_inner();
-        let b = s.next().await.unwrap().unwrap();
+        let b = next(&mut s).await.unwrap().unwrap();
         assert_eq!(b, Bytes::from_static(b"hello=world"));
     }
 

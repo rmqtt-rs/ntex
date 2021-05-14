@@ -3,16 +3,16 @@ use std::{convert::TryFrom, fmt, net::SocketAddr, rc::Rc, str};
 
 #[cfg(feature = "cookie")]
 use coo_kie::{Cookie, CookieJar};
-use futures::future::{err, ok, Either, TryFutureExt};
+use nanorand::{WyRand, RNG};
 
 use crate::codec::{AsyncRead, AsyncWrite, Framed};
 use crate::framed::{DispatchItem, Dispatcher, State};
+use crate::http::error::HttpError;
 use crate::http::header::{self, HeaderName, HeaderValue, AUTHORIZATION};
-use crate::http::{
-    error::HttpError, ConnectionType, Payload, RequestHead, StatusCode, Uri,
-};
+use crate::http::{ConnectionType, Payload, RequestHead, StatusCode, Uri};
 use crate::service::{apply_fn, into_service, IntoService, Service};
-use crate::{channel::mpsc, rt, rt::time::timeout, util::sink, ws};
+use crate::util::Either;
+use crate::{channel::mpsc, rt, rt::time::timeout, util::sink, util::Ready, ws};
 
 pub use crate::ws::{CloseCode, CloseReason, Frame, Message};
 
@@ -295,7 +295,8 @@ impl WsRequest {
         // Generate a random key for the `Sec-WebSocket-Key` header.
         // a base64-encoded (see Section 4 of [RFC4648]) value that,
         // when decoded, is 16 bytes in length (RFC 6455)
-        let sec_key: [u8; 16] = rand::random();
+        let mut sec_key: [u8; 16] = [0; 16];
+        WyRand::new().fill(&mut sec_key);
         let key = base64::encode(&sec_key);
 
         self.head.headers.insert(
@@ -444,7 +445,8 @@ where
 
             if let Err(err) = self
                 .start(into_service(move |item| {
-                    srv.call(Ok::<_, ws::WsError<()>>(item)).map_err(|_| ())
+                    let fut = srv.call(Ok::<_, ws::WsError<()>>(item));
+                    async move { fut.await.map_err(|_| ()) }
                 }))
                 .await
             {
@@ -466,14 +468,16 @@ where
             |req, srv| match req {
                 DispatchItem::Item(item) => Either::Left(srv.call(item)),
                 DispatchItem::WBackPressureEnabled
-                | DispatchItem::WBackPressureDisabled => Either::Right(ok(None)),
+                | DispatchItem::WBackPressureDisabled => Either::Right(Ready::Ok(None)),
                 DispatchItem::KeepAliveTimeout => {
-                    Either::Right(err(ws::WsError::KeepAlive))
+                    Either::Right(Ready::Err(ws::WsError::KeepAlive))
                 }
                 DispatchItem::DecoderError(e) | DispatchItem::EncoderError(e) => {
-                    Either::Right(err(ws::WsError::Protocol(e)))
+                    Either::Right(Ready::Err(ws::WsError::Protocol(e)))
                 }
-                DispatchItem::IoError(e) => Either::Right(err(ws::WsError::Io(e))),
+                DispatchItem::IoError(e) => {
+                    Either::Right(Ready::Err(ws::WsError::Io(e)))
+                }
             },
         );
 

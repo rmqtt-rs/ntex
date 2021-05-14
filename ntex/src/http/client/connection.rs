@@ -1,7 +1,6 @@
-use std::{fmt, time};
+use std::{fmt, future::Future, pin::Pin, time};
 
 use bytes::Bytes;
-use futures::future::{err, Either, Future, FutureExt, LocalBoxFuture, Ready};
 use h2::client::SendRequest;
 
 use crate::codec::{AsyncRead, AsyncWrite, Framed};
@@ -10,6 +9,7 @@ use crate::http::h1::ClientCodec;
 use crate::http::message::{RequestHeadType, ResponseHead};
 use crate::http::payload::Payload;
 use crate::http::Protocol;
+use crate::util::{Either, Ready};
 
 use super::error::SendRequestError;
 use super::pool::Acquired;
@@ -109,7 +109,7 @@ where
 {
     type Io = T;
     type Future =
-        LocalBoxFuture<'static, Result<(ResponseHead, Payload), SendRequestError>>;
+        Pin<Box<dyn Future<Output = Result<(ResponseHead, Payload), SendRequestError>>>>;
 
     fn protocol(&self) -> Protocol {
         match self.io {
@@ -125,30 +125,42 @@ where
         body: B,
     ) -> Self::Future {
         match self.io.take().unwrap() {
-            ConnectionType::H1(io) => {
-                h1proto::send_request(io, head.into(), body, self.created, self.pool)
-                    .boxed_local()
-            }
-            ConnectionType::H2(io) => {
-                h2proto::send_request(io, head.into(), body, self.created, self.pool)
-                    .boxed_local()
-            }
+            ConnectionType::H1(io) => Box::pin(h1proto::send_request(
+                io,
+                head.into(),
+                body,
+                self.created,
+                self.pool,
+            )),
+            ConnectionType::H2(io) => Box::pin(h2proto::send_request(
+                io,
+                head.into(),
+                body,
+                self.created,
+                self.pool,
+            )),
         }
     }
 
     type TunnelFuture = Either<
-        LocalBoxFuture<
-            'static,
-            Result<(ResponseHead, Framed<Self::Io, ClientCodec>), SendRequestError>,
+        Pin<
+            Box<
+                dyn Future<
+                    Output = Result<
+                        (ResponseHead, Framed<Self::Io, ClientCodec>),
+                        SendRequestError,
+                    >,
+                >,
+            >,
         >,
-        Ready<Result<(ResponseHead, Framed<Self::Io, ClientCodec>), SendRequestError>>,
+        Ready<(ResponseHead, Framed<Self::Io, ClientCodec>), SendRequestError>,
     >;
 
     /// Send request, returns Response and Framed
     fn open_tunnel<H: Into<RequestHeadType>>(mut self, head: H) -> Self::TunnelFuture {
         match self.io.take().unwrap() {
             ConnectionType::H1(io) => {
-                Either::Left(h1proto::open_tunnel(io, head.into()).boxed_local())
+                Either::Left(Box::pin(h1proto::open_tunnel(io, head.into())))
             }
             ConnectionType::H2(io) => {
                 if let Some(mut pool) = self.pool.take() {
@@ -158,7 +170,7 @@ where
                         None,
                     ));
                 }
-                Either::Right(err(SendRequestError::TunnelNotSupported))
+                Either::Right(Ready::Err(SendRequestError::TunnelNotSupported))
             }
         }
     }

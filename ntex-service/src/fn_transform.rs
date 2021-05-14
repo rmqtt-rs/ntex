@@ -1,4 +1,4 @@
-use futures_util::future::{ok, Ready};
+use ntex_util::future::Ready;
 use std::{future::Future, marker::PhantomData};
 
 use crate::{apply_fn, dev::Apply, Service, Transform};
@@ -47,10 +47,10 @@ where
     type Error = Err;
     type Transform = Apply<S, F, R, Req, Res, Err>;
     type InitError = ();
-    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+    type Future = Ready<Self::Transform, Self::InitError>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ok(apply_fn(service, self.f.clone()))
+        Ready::Ok(apply_fn(service, self.f.clone()))
     }
 }
 
@@ -68,7 +68,7 @@ where
 #[cfg(test)]
 #[allow(clippy::redundant_clone)]
 mod tests {
-    use futures_util::future::{lazy, ok};
+    use ntex_util::future::lazy;
     use std::task::{Context, Poll};
 
     use super::*;
@@ -81,14 +81,14 @@ mod tests {
         type Request = usize;
         type Response = usize;
         type Error = ();
-        type Future = Ready<Result<usize, ()>>;
+        type Future = Ready<usize, ()>;
 
         fn poll_ready(&self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
             Poll::Ready(Ok(()))
         }
 
         fn call(&self, i: usize) -> Self::Future {
-            ok(i * 2)
+            Ready::Ok(i * 2)
         }
     }
 

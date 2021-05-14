@@ -1,12 +1,10 @@
 //! Payload stream
-use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::pin::Pin;
 use std::rc::{Rc, Weak};
 use std::task::{Context, Poll};
+use std::{cell::RefCell, collections::VecDeque, pin::Pin};
 
 use bytes::Bytes;
-use futures::Stream;
+use futures_core::Stream;
 
 use crate::http::error::PayloadError;
 use crate::task::LocalWaker;
@@ -161,6 +159,7 @@ impl Inner {
 
     fn set_error(&mut self, err: PayloadError) {
         self.err = Some(err);
+        self.task.wake()
     }
 
     fn feed_eof(&mut self) {
@@ -209,7 +208,7 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::future::poll_fn;
+    use crate::util::poll_fn;
 
     #[crate::rt_test]
     async fn test_unread_data() {

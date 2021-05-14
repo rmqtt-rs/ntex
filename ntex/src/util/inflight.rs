@@ -1,14 +1,8 @@
 //! Service that limits number of in-flight async requests.
-
-use std::convert::Infallible;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
-use futures::future::{ok, Ready};
+use std::{convert::Infallible, future::Future, pin::Pin, task::Context, task::Poll};
 
 use super::counter::{Counter, CounterGuard};
-use crate::service::{IntoService, Service, Transform};
+use crate::{util::Ready, IntoService, Service, Transform};
 
 /// InFlight - service factory for service that can limit number of in-flight
 /// async requests.
@@ -39,10 +33,10 @@ where
     type Error = S::Error;
     type InitError = Infallible;
     type Transform = InFlightService<S>;
-    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+    type Future = Ready<Self::Transform, Self::InitError>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ok(InFlightService::new(self.max_inflight, service))
+        Ready::Ok(InFlightService::new(self.max_inflight, service))
     }
 }
 
@@ -125,7 +119,7 @@ mod tests {
 
     use super::*;
     use crate::service::{apply, fn_factory, Service, ServiceFactory};
-    use futures::future::{lazy, ok, FutureExt, LocalBoxFuture};
+    use crate::util::lazy;
 
     struct SleepService(Duration);
 
@@ -133,16 +127,18 @@ mod tests {
         type Request = ();
         type Response = ();
         type Error = ();
-        type Future = LocalBoxFuture<'static, Result<(), ()>>;
+        type Future = Pin<Box<dyn Future<Output = Result<(), ()>>>>;
 
         fn poll_ready(&self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
             Poll::Ready(Ok(()))
         }
 
         fn call(&self, _: ()) -> Self::Future {
-            crate::rt::time::sleep(self.0)
-                .then(|_| ok::<_, ()>(()))
-                .boxed_local()
+            let fut = crate::rt::time::sleep(self.0);
+            Box::pin(async move {
+                let _ = fut.await;
+                Ok::<_, ()>(())
+            })
         }
     }
 
@@ -166,7 +162,10 @@ mod tests {
     async fn test_newtransform() {
         let wait_time = Duration::from_millis(50);
 
-        let srv = apply(InFlight::new(1), fn_factory(|| ok(SleepService(wait_time))));
+        let srv = apply(
+            InFlight::new(1),
+            fn_factory(|| async { Ok(SleepService(wait_time)) }),
+        );
 
         let srv = srv.new_service(&()).await.unwrap();
         assert_eq!(lazy(|cx| srv.poll_ready(cx)).await, Poll::Ready(Ok(())));

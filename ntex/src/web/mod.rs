@@ -24,7 +24,7 @@
 //! at!), several other resources are available:
 //!
 //! * [User Guide](https://docs.rs/ntex/)
-//! * [GitHub repository](https://github.com/mtex-rs/ntex)
+//! * [GitHub repository](https://github.com/ntex-rs/ntex)
 //! * [Cargo package](https://crates.io/crates/ntex)
 //!
 //! To get started navigating the API documentation you may want to
@@ -100,7 +100,6 @@ pub use ntex_macros::web_trace as trace;
 
 pub use crate::http::Response as HttpResponse;
 pub use crate::http::ResponseBuilder as HttpResponseBuilder;
-pub use either::Either;
 
 pub use self::app::App;
 pub use self::config::ServiceConfig;
@@ -110,11 +109,14 @@ pub use self::error::{
 pub use self::extract::FromRequest;
 pub use self::handler::Handler;
 pub use self::httprequest::HttpRequest;
+pub use self::request::WebRequest;
 pub use self::resource::Resource;
 pub use self::responder::Responder;
+pub use self::response::WebResponse;
 pub use self::route::Route;
 pub use self::scope::Scope;
 pub use self::server::HttpServer;
+pub use self::service::WebServiceFactory;
 pub use self::util::*;
 
 pub mod dev {

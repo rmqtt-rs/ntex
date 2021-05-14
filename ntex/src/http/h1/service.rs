@@ -1,13 +1,12 @@
 use std::{
-    error::Error, fmt, marker::PhantomData, net, rc::Rc, task::Context, task::Poll,
+    cell::RefCell, error::Error, fmt, future::Future, marker, net, pin::Pin, rc::Rc,
+    task,
 };
-
-use futures::future::{ok, FutureExt, LocalBoxFuture};
 
 use crate::codec::{AsyncRead, AsyncWrite};
 use crate::framed::State as IoState;
 use crate::http::body::MessageBody;
-use crate::http::config::{DispatcherConfig, ServiceConfig};
+use crate::http::config::{DispatcherConfig, OnRequest, ServiceConfig};
 use crate::http::error::{DispatchError, ResponseError};
 use crate::http::helpers::DataFactory;
 use crate::http::request::Request;
@@ -26,9 +25,10 @@ pub struct H1Service<T, S, B, X = ExpectHandler, U = UpgradeHandler<T>> {
     expect: X,
     upgrade: Option<U>,
     on_connect: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+    on_request: RefCell<Option<OnRequest<T>>>,
     #[allow(dead_code)]
     handshake_timeout: u64,
-    _t: PhantomData<(T, B)>,
+    _t: marker::PhantomData<(T, B)>,
 }
 
 impl<T, S, B> H1Service<T, S, B>
@@ -49,8 +49,9 @@ where
             expect: ExpectHandler,
             upgrade: None,
             on_connect: None,
+            on_request: RefCell::new(None),
             handshake_timeout: cfg.0.ssl_handshake_timeout,
-            _t: PhantomData,
+            _t: marker::PhantomData,
             cfg,
         }
     }
@@ -87,9 +88,9 @@ where
         Error = DispatchError,
         InitError = (),
     > {
-        pipeline_factory(|io: TcpStream| {
+        pipeline_factory(|io: TcpStream| async move {
             let peer_addr = io.peer_addr().ok();
-            ok((io, peer_addr))
+            Ok((io, peer_addr))
         })
         .and_then(self)
     }
@@ -140,9 +141,9 @@ mod openssl {
                     .map_err(SslError::Ssl)
                     .map_init_err(|_| panic!()),
             )
-            .and_then(|io: SslStream<TcpStream>| {
+            .and_then(|io: SslStream<TcpStream>| async move {
                 let peer_addr = io.get_ref().peer_addr().ok();
-                ok((io, peer_addr))
+                Ok((io, peer_addr))
             })
             .and_then(self.map_err(SslError::Service))
         }
@@ -194,9 +195,9 @@ mod rustls {
                     .map_err(SslError::Ssl)
                     .map_init_err(|_| panic!()),
             )
-            .and_then(|io: TlsStream<TcpStream>| {
+            .and_then(|io: TlsStream<TcpStream>| async move {
                 let peer_addr = io.get_ref().0.peer_addr().ok();
-                ok((io, peer_addr))
+                Ok((io, peer_addr))
             })
             .and_then(self.map_err(SslError::Service))
         }
@@ -225,8 +226,9 @@ where
             srv: self.srv,
             upgrade: self.upgrade,
             on_connect: self.on_connect,
+            on_request: self.on_request,
             handshake_timeout: self.handshake_timeout,
-            _t: PhantomData,
+            _t: marker::PhantomData,
         }
     }
 
@@ -243,8 +245,9 @@ where
             srv: self.srv,
             expect: self.expect,
             on_connect: self.on_connect,
+            on_request: self.on_request,
             handshake_timeout: self.handshake_timeout,
-            _t: PhantomData,
+            _t: marker::PhantomData,
         }
     }
 
@@ -254,6 +257,14 @@ where
         f: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
     ) -> Self {
         self.on_connect = f;
+        self
+    }
+
+    /// Set req request callback.
+    ///
+    /// It get called once per request.
+    pub(crate) fn on_request(self, f: Option<OnRequest<T>>) -> Self {
+        *self.on_request.borrow_mut() = f;
         self
     }
 }
@@ -286,16 +297,17 @@ where
     type Error = DispatchError;
     type InitError = ();
     type Service = H1ServiceHandler<T, S::Service, B, X::Service, U::Service>;
-    type Future = LocalBoxFuture<'static, Result<Self::Service, Self::InitError>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Service, Self::InitError>>>>;
 
     fn new_service(&self, _: ()) -> Self::Future {
         let fut = self.srv.new_service(());
         let fut_ex = self.expect.new_service(());
         let fut_upg = self.upgrade.as_ref().map(|f| f.new_service(()));
         let on_connect = self.on_connect.clone();
+        let on_request = self.on_request.borrow_mut().take();
         let cfg = self.cfg.clone();
 
-        async move {
+        Box::pin(async move {
             let service = fut
                 .await
                 .map_err(|e| log::error!("Init http service error: {:?}", e))?;
@@ -311,23 +323,24 @@ where
                 None
             };
 
-            let config = Rc::new(DispatcherConfig::new(cfg, service, expect, upgrade));
+            let config = Rc::new(DispatcherConfig::new(
+                cfg, service, expect, upgrade, on_request,
+            ));
 
             Ok(H1ServiceHandler {
                 config,
                 on_connect,
-                _t: PhantomData,
+                _t: marker::PhantomData,
             })
-        }
-        .boxed_local()
+        })
     }
 }
 
 /// `Service` implementation for HTTP1 transport
 pub struct H1ServiceHandler<T, S: Service, B, X: Service, U: Service> {
-    config: Rc<DispatcherConfig<S, X, U>>,
+    config: Rc<DispatcherConfig<T, S, X, U>>,
     on_connect: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
-    _t: PhantomData<(T, B)>,
+    _t: marker::PhantomData<(T, B)>,
 }
 
 impl<T, S, B, X, U> Service for H1ServiceHandler<T, S, B, X, U>
@@ -347,7 +360,10 @@ where
     type Error = DispatchError;
     type Future = Dispatcher<T, S, B, X, U>;
 
-    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(
+        &self,
+        cx: &mut task::Context<'_>,
+    ) -> task::Poll<Result<(), Self::Error>> {
         let cfg = self.config.as_ref();
 
         let ready = cfg
@@ -382,13 +398,17 @@ where
         };
 
         if ready {
-            Poll::Ready(Ok(()))
+            task::Poll::Ready(Ok(()))
         } else {
-            Poll::Pending
+            task::Poll::Pending
         }
     }
 
-    fn poll_shutdown(&self, cx: &mut Context<'_>, is_error: bool) -> Poll<()> {
+    fn poll_shutdown(
+        &self,
+        cx: &mut task::Context<'_>,
+        is_error: bool,
+    ) -> task::Poll<()> {
         let ready = self.config.expect.poll_shutdown(cx, is_error).is_ready();
         let ready = self.config.service.poll_shutdown(cx, is_error).is_ready() && ready;
         let ready = if let Some(ref upg) = self.config.upgrade {
@@ -398,9 +418,9 @@ where
         };
 
         if ready {
-            Poll::Ready(())
+            task::Poll::Ready(())
         } else {
-            Poll::Pending
+            task::Poll::Pending
         }
     }
 

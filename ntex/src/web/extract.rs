@@ -1,14 +1,9 @@
 //! Request extractors
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
-use futures::future::{ok, FutureExt, LocalBoxFuture, Ready};
-
-use crate::http::Payload;
+use std::{future::Future, pin::Pin, task::Context, task::Poll};
 
 use super::error::ErrorRenderer;
 use super::httprequest::HttpRequest;
+use crate::{http::Payload, util::Ready};
 
 /// Trait implemented by types that can be extracted from request.
 ///
@@ -38,28 +33,25 @@ pub trait FromRequest<Err>: Sized {
 /// ## Example
 ///
 /// ```rust
-/// use ntex::http;
+/// use ntex::{http, util::Ready};
 /// use ntex::web::{self, error, App, HttpRequest, FromRequest, DefaultError};
-/// use futures::future::{ok, err, Ready};
-/// use serde_derive::Deserialize;
 /// use rand;
 ///
-/// #[derive(Debug, Deserialize)]
+/// #[derive(Debug, serde::Deserialize)]
 /// struct Thing {
 ///     name: String
 /// }
 ///
 /// impl<Err> FromRequest<Err> for Thing {
 ///     type Error = error::Error;
-///     type Future = Ready<Result<Self, Self::Error>>;
+///     type Future = Ready<Self, Self::Error>;
 ///
 ///     fn from_request(req: &HttpRequest, payload: &mut http::Payload) -> Self::Future {
 ///         if rand::random() {
-///             ok(Thing { name: "thingy".into() })
+///             Ready::Ok(Thing { name: "thingy".into() })
 ///         } else {
-///             err(error::ErrorBadRequest("no luck").into())
+///             Ready::Err(error::ErrorBadRequest("no luck").into())
 ///         }
-///
 ///     }
 /// }
 ///
@@ -87,19 +79,20 @@ where
     <T as FromRequest<Err>>::Error: Into<Err::Container>,
 {
     type Error = Err::Container;
-    type Future = LocalBoxFuture<'static, Result<Option<T>, Self::Error>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Option<T>, Self::Error>>>>;
 
     #[inline]
     fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future {
-        T::from_request(req, payload)
-            .then(|r| match r {
-                Ok(v) => ok(Some(v)),
+        let fut = T::from_request(req, payload);
+        Box::pin(async move {
+            match fut.await {
+                Ok(v) => Ok(Some(v)),
                 Err(e) => {
                     log::debug!("Error for Option<T> extractor: {}", e.into());
-                    ok(None)
+                    Ok(None)
                 }
-            })
-            .boxed_local()
+            }
+        })
     }
 }
 
@@ -110,26 +103,24 @@ where
 /// ## Example
 ///
 /// ```rust
-/// use ntex::http;
+/// use ntex::{http, util::Ready};
 /// use ntex::web::{self, error, App, HttpRequest, FromRequest};
-/// use futures::future::{ok, err, Ready};
-/// use serde_derive::Deserialize;
 /// use rand;
 ///
-/// #[derive(Debug, Deserialize)]
+/// #[derive(Debug, serde::Deserialize)]
 /// struct Thing {
 ///     name: String
 /// }
 ///
 /// impl<Err> FromRequest<Err> for Thing {
 ///     type Error = error::Error;
-///     type Future = Ready<Result<Thing, Self::Error>>;
+///     type Future = Ready<Thing, Self::Error>;
 ///
 ///     fn from_request(req: &HttpRequest, payload: &mut http::Payload) -> Self::Future {
 ///         if rand::random() {
-///             ok(Thing { name: "thingy".into() })
+///             Ready::Ok(Thing { name: "thingy".into() })
 ///         } else {
-///             err(error::ErrorBadRequest("no luck").into())
+///             Ready::Err(error::ErrorBadRequest("no luck").into())
 ///         }
 ///     }
 /// }
@@ -156,26 +147,28 @@ where
     E: ErrorRenderer,
 {
     type Error = T::Error;
-    type Future = LocalBoxFuture<'static, Result<Result<T, T::Error>, Self::Error>>;
+    type Future =
+        Pin<Box<dyn Future<Output = Result<Result<T, T::Error>, Self::Error>>>>;
 
     #[inline]
     fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future {
-        T::from_request(req, payload)
-            .then(|res| match res {
-                Ok(v) => ok(Ok(v)),
-                Err(e) => ok(Err(e)),
-            })
-            .boxed_local()
+        let fut = T::from_request(req, payload);
+        Box::pin(async move {
+            match fut.await {
+                Ok(v) => Ok(Ok(v)),
+                Err(e) => Ok(Err(e)),
+            }
+        })
     }
 }
 
 #[doc(hidden)]
 impl<E: ErrorRenderer> FromRequest<E> for () {
     type Error = E::Container;
-    type Future = Ready<Result<(), E::Container>>;
+    type Future = Ready<(), E::Container>;
 
     fn from_request(_: &HttpRequest, _: &mut Payload) -> Self::Future {
-        ok(())
+        Ok(()).into()
     }
 }
 
@@ -260,14 +253,13 @@ tuple_from_req!(TupleFromRequest10, (0, A), (1, B), (2, C), (3, D), (4, E), (5, 
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use serde_derive::Deserialize;
 
     use crate::http::header;
     use crate::web::error::UrlencodedError;
     use crate::web::test::{from_request, TestRequest};
     use crate::web::types::{Form, FormConfig};
 
-    #[derive(Deserialize, Debug, PartialEq)]
+    #[derive(serde::Deserialize, Debug, PartialEq)]
     struct Info {
         hello: String,
     }

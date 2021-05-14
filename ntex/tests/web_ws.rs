@@ -67,6 +67,8 @@ async fn web_ws() {
 
 #[ntex::test]
 async fn web_ws_client() {
+    env_logger::init();
+
     let srv = test::server(|| {
         App::new().service(web::resource("/").route(web::to(
             |req: HttpRequest, pl: web::types::Payload| async move {
@@ -103,6 +105,8 @@ async fn web_ws_client() {
     let item = rx.next().await.unwrap().unwrap();
     assert_eq!(item, ws::Frame::Pong("text".to_string().into()));
 
+    let on_disconnect = sink.on_disconnect();
+
     sink.send(ws::Message::Close(Some(ws::CloseCode::Normal.into())))
         .await
         .unwrap();
@@ -111,4 +115,6 @@ async fn web_ws_client() {
 
     let item = rx.next().await.unwrap();
     assert!(item.is_err());
+
+    on_disconnect.await
 }

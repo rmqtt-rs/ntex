@@ -1,11 +1,10 @@
-use std::{cell::Cell, ptr::copy_nonoverlapping, rc::Rc, time::Duration};
-
-use bytes::BytesMut;
-use futures::{future, FutureExt};
-use time::OffsetDateTime;
+use std::{cell::Cell, cell::RefCell, ptr::copy_nonoverlapping, rc::Rc, time};
 
 use crate::framed::Timer;
+use crate::http::{Request, Response};
 use crate::rt::time::{sleep, sleep_until, Instant, Sleep};
+use crate::service::boxed::BoxService;
+use crate::util::BytesMut;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 /// Server keep-alive setting
@@ -99,11 +98,13 @@ impl ServiceConfig {
     }
 }
 
-pub(super) struct DispatcherConfig<S, X, U> {
+pub(super) type OnRequest<T> = BoxService<(Request, Rc<RefCell<T>>), Request, Response>;
+
+pub(super) struct DispatcherConfig<T, S, X, U> {
     pub(super) service: S,
     pub(super) expect: X,
     pub(super) upgrade: Option<U>,
-    pub(super) keep_alive: Duration,
+    pub(super) keep_alive: time::Duration,
     pub(super) client_timeout: u64,
     pub(super) client_disconnect: u64,
     pub(super) ka_enabled: bool,
@@ -112,20 +113,23 @@ pub(super) struct DispatcherConfig<S, X, U> {
     pub(super) lw: u16,
     pub(super) read_hw: u16,
     pub(super) write_hw: u16,
+    pub(super) on_request: Option<OnRequest<T>>,
 }
 
-impl<S, X, U> DispatcherConfig<S, X, U> {
+impl<T, S, X, U> DispatcherConfig<T, S, X, U> {
     pub(super) fn new(
         cfg: ServiceConfig,
         service: S,
         expect: X,
         upgrade: Option<U>,
+        on_request: Option<OnRequest<T>>,
     ) -> Self {
         DispatcherConfig {
             service,
             expect,
             upgrade,
-            keep_alive: Duration::from_secs(cfg.0.keep_alive),
+            on_request,
+            keep_alive: time::Duration::from_secs(cfg.0.keep_alive),
             client_timeout: cfg.0.client_timeout,
             client_disconnect: cfg.0.client_disconnect,
             ka_enabled: cfg.0.ka_enabled,
@@ -201,7 +205,7 @@ impl DateServiceInner {
         self.current_time.set(Instant::now());
 
         let mut bytes = DATE_VALUE_DEFAULT;
-        let dt = OffsetDateTime::now_utc().format("%a, %d %b %Y %H:%M:%S GMT");
+        let dt = httpdate::HttpDate::from(time::SystemTime::now()).to_string();
         bytes[6..35].copy_from_slice(dt.as_ref());
         self.current_date.set(bytes);
     }
@@ -218,10 +222,10 @@ impl DateService {
 
             // periodic date update
             let s = self.clone();
-            crate::rt::spawn(sleep(Duration::from_millis(500)).then(move |_| {
+            crate::rt::spawn(async move {
+                sleep(time::Duration::from_millis(500)).await;
                 s.0.current.set(false);
-                future::ready(())
-            }));
+            });
         }
     }
 

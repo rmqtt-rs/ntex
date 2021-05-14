@@ -1,14 +1,13 @@
-use std::{cell::RefCell, fmt, rc::Rc, task::Context, task::Poll};
-
-use futures::future::{ok, Either, Future, FutureExt, LocalBoxFuture, Ready};
+use std::{
+    cell::RefCell, fmt, future::Future, pin::Pin, rc::Rc, task::Context, task::Poll,
+};
 
 use crate::http::Response;
 use crate::router::{IntoPattern, ResourceDef};
 use crate::service::boxed::{self, BoxService, BoxServiceFactory};
-use crate::service::{
-    apply, apply_fn_factory, IntoServiceFactory, Service, ServiceFactory, Transform,
-};
-use crate::util::Extensions;
+use crate::service::{apply, apply_fn_factory, pipeline_factory};
+use crate::service::{IntoServiceFactory, Service, ServiceFactory, Transform};
+use crate::util::{Either, Extensions, Ready};
 
 use super::dev::{insert_slesh, WebServiceConfig, WebServiceFactory};
 use super::error::ErrorRenderer;
@@ -244,6 +243,52 @@ where
         self
     }
 
+    /// Register request filter.
+    ///
+    /// This is similar to `App's` filters, but filter get invoked on resource level.
+    pub fn filter<F>(
+        self,
+        filter: F,
+    ) -> Resource<
+        Err,
+        impl ServiceFactory<
+            Config = (),
+            Request = WebRequest<Err>,
+            Response = WebResponse,
+            Error = Err::Container,
+            InitError = (),
+        >,
+    >
+    where
+        F: ServiceFactory<
+            Config = (),
+            Request = WebRequest<Err>,
+            Response = Either<WebRequest<Err>, WebResponse>,
+            Error = Err::Container,
+            InitError = (),
+        >,
+    {
+        let ep = self.endpoint;
+        let endpoint =
+            pipeline_factory(filter).and_then_apply_fn(ep, move |result, srv| {
+                match result {
+                    Either::Left(req) => Either::Left(srv.call(req)),
+                    Either::Right(res) => Either::Right(Ready::Ok(res)),
+                }
+            });
+
+        Resource {
+            endpoint,
+            rdef: self.rdef,
+            name: self.name,
+            guards: self.guards,
+            routes: self.routes,
+            default: self.default,
+            data: self.data,
+            factory_ref: self.factory_ref,
+        }
+    }
+
     /// Register a resource middleware.
     ///
     /// This is similar to `App's` middlewares, but middleware get invoked on resource level.
@@ -365,7 +410,7 @@ where
         // create and configure default resource
         self.default = Rc::new(RefCell::new(Some(Rc::new(boxed::factory(
             f.into_factory().map_init_err(|e| {
-                log::error!("Can not construct default service: {:?}", e)
+                log::error!("Cannot construct default service: {:?}", e)
             }),
         )))));
 
@@ -441,14 +486,14 @@ impl<Err: ErrorRenderer> ServiceFactory for ResourceFactory<Err> {
     type Error = Err::Container;
     type InitError = ();
     type Service = ResourceService<Err>;
-    type Future = LocalBoxFuture<'static, Result<Self::Service, Self::InitError>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Service, Self::InitError>>>>;
 
     fn new_service(&self, _: ()) -> Self::Future {
         let data = self.data.clone();
         let routes = self.routes.iter().map(|route| route.service()).collect();
         let default_fut = self.default.borrow().as_ref().map(|f| f.new_service(()));
 
-        async move {
+        Box::pin(async move {
             let default = if let Some(fut) = default_fut {
                 Some(fut.await?)
             } else {
@@ -460,8 +505,7 @@ impl<Err: ErrorRenderer> ServiceFactory for ResourceFactory<Err> {
                 data,
                 default,
             })
-        }
-        .boxed_local()
+        })
     }
 }
 
@@ -476,8 +520,8 @@ impl<Err: ErrorRenderer> Service for ResourceService<Err> {
     type Response = WebResponse;
     type Error = Err::Container;
     type Future = Either<
-        Ready<Result<WebResponse, Err::Container>>,
-        LocalBoxFuture<'static, Result<WebResponse, Err::Container>>,
+        Ready<WebResponse, Err::Container>,
+        Pin<Box<dyn Future<Output = Result<WebResponse, Err::Container>>>>,
     >;
 
     #[inline]
@@ -497,7 +541,7 @@ impl<Err: ErrorRenderer> Service for ResourceService<Err> {
         if let Some(ref default) = self.default {
             Either::Right(default.call(req))
         } else {
-            Either::Left(ok(WebResponse::new(
+            Either::Left(Ready::Ok(WebResponse::new(
                 Response::MethodNotAllowed().finish(),
                 req.into_parts().0,
             )))
@@ -523,7 +567,7 @@ impl<Err: ErrorRenderer> ServiceFactory for ResourceEndpoint<Err> {
     type Error = Err::Container;
     type InitError = ();
     type Service = ResourceService<Err>;
-    type Future = LocalBoxFuture<'static, Result<Self::Service, Self::InitError>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Service, Self::InitError>>>>;
 
     fn new_service(&self, _: ()) -> Self::Future {
         self.factory.borrow_mut().as_mut().unwrap().new_service(())
@@ -534,8 +578,6 @@ impl<Err: ErrorRenderer> ServiceFactory for ResourceEndpoint<Err> {
 mod tests {
     use std::time::Duration;
 
-    use futures::future::{ok, ready};
-
     use crate::http::header::{self, HeaderValue};
     use crate::http::{Method, StatusCode};
     use crate::rt::time::sleep;
@@ -543,7 +585,24 @@ mod tests {
     use crate::web::request::WebRequest;
     use crate::web::test::{call_service, init_service, TestRequest};
     use crate::web::{self, guard, App, DefaultError, HttpResponse};
-    use crate::Service;
+    use crate::{fn_service, util::Either, Service};
+
+    #[crate::rt_test]
+    async fn test_filter() {
+        let srv = init_service(
+            App::new().service(
+                web::resource("/test")
+                    .filter(fn_service(|req: WebRequest<_>| async move {
+                        Ok(Either::Right(req.into_response(HttpResponse::NotFound())))
+                    }))
+                    .route(web::get().to(|| async { HttpResponse::Ok() })),
+            ),
+        )
+        .await;
+        let req = TestRequest::with_uri("/test").to_request();
+        let resp = call_service(&srv, req).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
 
     #[crate::rt_test]
     async fn test_middleware() {
@@ -634,8 +693,8 @@ mod tests {
                     web::resource("/test")
                         .route(web::get().to(|| async { HttpResponse::Ok() })),
                 )
-                .default_service(|r: WebRequest<DefaultError>| {
-                    ok(r.into_response(HttpResponse::BadRequest()))
+                .default_service(|r: WebRequest<DefaultError>| async move {
+                    Ok(r.into_response(HttpResponse::BadRequest()))
                 }),
         )
         .await;
@@ -653,8 +712,8 @@ mod tests {
             App::new().service(
                 web::resource("/test")
                     .route(web::get().to(|| async { HttpResponse::Ok() }))
-                    .default_service(|r: WebRequest<DefaultError>| {
-                        ok(r.into_response(HttpResponse::BadRequest()))
+                    .default_service(|r: WebRequest<DefaultError>| async move {
+                        Ok(r.into_response(HttpResponse::BadRequest()))
                     }),
             ),
         )
@@ -731,7 +790,7 @@ mod tests {
                                 assert_eq!(**data1, 10);
                                 assert_eq!(**data2, '*');
                                 assert_eq!(**data3, 1);
-                                ready(HttpResponse::Ok())
+                                async { HttpResponse::Ok() }
                             },
                         ),
                 ),

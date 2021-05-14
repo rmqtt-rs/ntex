@@ -1,7 +1,4 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::rc::Rc;
-use std::task::{Context, Poll};
+use std::{future::Future, pin::Pin, rc::Rc, task::Context, task::Poll};
 
 use super::{Service, ServiceFactory};
 
@@ -259,11 +256,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
-    use std::rc::Rc;
-    use std::task::{Context, Poll};
-
-    use futures_util::future::{err, lazy, ok, ready, Ready};
+    use ntex_util::future::{lazy, Ready};
+    use std::{cell::Cell, rc::Rc, task::Context, task::Poll};
 
     use crate::{pipeline, pipeline_factory, Service, ServiceFactory};
 
@@ -274,7 +268,7 @@ mod tests {
         type Request = Result<&'static str, &'static str>;
         type Response = &'static str;
         type Error = ();
-        type Future = Ready<Result<Self::Response, Self::Error>>;
+        type Future = Ready<Self::Response, Self::Error>;
 
         fn poll_ready(&self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
             self.0.set(self.0.get() + 1);
@@ -283,8 +277,8 @@ mod tests {
 
         fn call(&self, req: Result<&'static str, &'static str>) -> Self::Future {
             match req {
-                Ok(msg) => ok(msg),
-                Err(_) => err(()),
+                Ok(msg) => Ready::Ok(msg),
+                Err(_) => Ready::Err(()),
             }
         }
     }
@@ -295,7 +289,7 @@ mod tests {
         type Request = Result<&'static str, ()>;
         type Response = (&'static str, &'static str);
         type Error = ();
-        type Future = Ready<Result<Self::Response, ()>>;
+        type Future = Ready<Self::Response, ()>;
 
         fn poll_ready(&self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
             self.0.set(self.0.get() + 1);
@@ -304,8 +298,8 @@ mod tests {
 
         fn call(&self, req: Result<&'static str, ()>) -> Self::Future {
             match req {
-                Ok(msg) => ok((msg, "ok")),
-                Err(()) => ok(("srv2", "err")),
+                Ok(msg) => Ready::Ok((msg, "ok")),
+                Err(()) => Ready::Ok(("srv2", "err")),
             }
         }
     }
@@ -339,9 +333,9 @@ mod tests {
     async fn test_factory() {
         let cnt = Rc::new(Cell::new(0));
         let cnt2 = cnt.clone();
-        let blank = move || ready(Ok::<_, ()>(Srv1(cnt2.clone())));
+        let blank = move || Ready::<_, ()>::Ok(Srv1(cnt2.clone()));
         let factory = pipeline_factory(blank)
-            .then(move || ready(Ok(Srv2(cnt.clone()))))
+            .then(move || Ready::Ok(Srv2(cnt.clone())))
             .clone();
         let srv = factory.new_service(&()).await.unwrap();
         let res = srv.call(Ok("srv1")).await;

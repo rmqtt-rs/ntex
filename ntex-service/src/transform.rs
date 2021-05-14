@@ -1,7 +1,4 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::rc::Rc;
-use std::task::{Context, Poll};
+use std::{future::Future, pin::Pin, rc::Rc, task::Context, task::Poll};
 
 use crate::transform_err::TransformMapInitErr;
 use crate::{IntoServiceFactory, Service, ServiceFactory};
@@ -64,7 +61,7 @@ where
 ///
 /// Factory for `Timeout` middleware from the above example could look like this:
 ///
-/// ```rust,,ignore
+/// ```rust,ignore
 /// pub struct TimeoutTransform {
 ///     timeout: Duration,
 /// }
@@ -236,7 +233,7 @@ where
 #[cfg(test)]
 #[allow(clippy::redundant_clone)]
 mod tests {
-    use futures_util::future::{lazy, ok, Ready};
+    use ntex_util::future::{lazy, Ready};
 
     use super::*;
     use crate::{fn_service, Service, ServiceFactory};
@@ -251,10 +248,10 @@ mod tests {
 
         type Transform = Srv<S>;
         type InitError = ();
-        type Future = Ready<Result<Self::Transform, Self::InitError>>;
+        type Future = Ready<Self::Transform, Self::InitError>;
 
         fn new_transform(&self, service: S) -> Self::Future {
-            ok(Srv(service))
+            Ready::Ok(Srv(service))
         }
     }
 
@@ -280,7 +277,7 @@ mod tests {
     async fn transform() {
         let factory = apply(
             Rc::new(Tr.map_init_err(|_| ()).clone()),
-            fn_service(|i: usize| ok::<_, ()>(i * 2)),
+            fn_service(|i: usize| Ready::<_, ()>::Ok(i * 2)),
         )
         .clone();
 

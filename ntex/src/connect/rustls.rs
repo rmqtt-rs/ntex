@@ -1,18 +1,16 @@
-use std::io;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::{future::Future, io, pin::Pin, sync::Arc, task::Context, task::Poll};
 
 pub use rust_tls::Session;
 pub use tokio_rustls::{client::TlsStream, rustls::ClientConfig};
 
-use futures::future::{ok, Future, FutureExt, LocalBoxFuture, Ready};
 use tokio_rustls::{self, TlsConnector};
 use webpki::DNSNameRef;
 
 use crate::rt::net::TcpStream;
 use crate::service::{Service, ServiceFactory};
+use crate::util::Ready;
 
-use super::{Address, Connect, ConnectError, Connector, DnsResolver};
+use super::{Address, Connect, ConnectError, Connector};
 
 /// Rustls connector factory
 pub struct RustlsConnector<T> {
@@ -25,14 +23,6 @@ impl<T> RustlsConnector<T> {
         RustlsConnector {
             config,
             connector: Connector::default(),
-        }
-    }
-
-    /// Construct new connect service with custom dns resolver
-    pub fn with_resolver(config: Arc<ClientConfig>, resolver: DnsResolver) -> Self {
-        RustlsConnector {
-            config,
-            connector: Connector::new(resolver),
         }
     }
 }
@@ -88,10 +78,10 @@ impl<T: Address + 'static> ServiceFactory for RustlsConnector<T> {
     type Config = ();
     type Service = RustlsConnector<T>;
     type InitError = ();
-    type Future = Ready<Result<Self::Service, Self::InitError>>;
+    type Future = Ready<Self::Service, Self::InitError>;
 
     fn new_service(&self, _: ()) -> Self::Future {
-        ok(self.clone())
+        Ready::Ok(self.clone())
     }
 }
 
@@ -99,7 +89,7 @@ impl<T: Address + 'static> Service for RustlsConnector<T> {
     type Request = Connect<T>;
     type Response = TlsStream<TcpStream>;
     type Error = ConnectError;
-    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
     #[inline]
     fn poll_ready(&self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -107,7 +97,7 @@ impl<T: Address + 'static> Service for RustlsConnector<T> {
     }
 
     fn call(&self, req: Connect<T>) -> Self::Future {
-        self.connect(req).boxed_local()
+        Box::pin(self.connect(req))
     }
 }
 

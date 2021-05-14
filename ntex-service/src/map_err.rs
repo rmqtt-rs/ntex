@@ -1,7 +1,4 @@
-use std::future::Future;
-use std::marker::PhantomData;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::{future::Future, marker::PhantomData, pin::Pin, task::Context, task::Poll};
 
 use super::{Service, ServiceFactory};
 
@@ -210,10 +207,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use futures_util::future::{err, lazy, ok, Ready};
-
     use super::*;
     use crate::{IntoServiceFactory, Service, ServiceFactory};
+    use ntex_util::future::{lazy, Ready};
 
     #[derive(Clone)]
     struct Srv;
@@ -222,14 +218,14 @@ mod tests {
         type Request = ();
         type Response = ();
         type Error = ();
-        type Future = Ready<Result<(), ()>>;
+        type Future = Ready<(), ()>;
 
         fn poll_ready(&self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
             Poll::Ready(Err(()))
         }
 
         fn call(&self, _: ()) -> Self::Future {
-            err(())
+            Ready::Err(())
         }
     }
 
@@ -261,7 +257,7 @@ mod tests {
 
     #[ntex::test]
     async fn test_factory() {
-        let new_srv = (|| ok::<_, ()>(Srv))
+        let new_srv = (|| Ready::<_, ()>::Ok(Srv))
             .into_factory()
             .map_err(|_| "error")
             .clone();
@@ -273,9 +269,10 @@ mod tests {
 
     #[ntex::test]
     async fn test_pipeline_factory() {
-        let new_srv = crate::pipeline_factory((|| ok::<_, ()>(Srv)).into_factory())
-            .map_err(|_| "error")
-            .clone();
+        let new_srv =
+            crate::pipeline_factory((|| async { Ok::<_, ()>(Srv) }).into_factory())
+                .map_err(|_| "error")
+                .clone();
         let srv = new_srv.new_service(&()).await.unwrap();
         let res = srv.call(()).await;
         assert!(res.is_err());

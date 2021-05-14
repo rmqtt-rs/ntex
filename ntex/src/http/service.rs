@@ -1,9 +1,9 @@
 use std::{
-    error, fmt, marker::PhantomData, net, pin::Pin, rc::Rc, task::Context, task::Poll,
+    cell, error, fmt, future::Future, marker, net, pin::Pin, rc::Rc, task::Context,
+    task::Poll,
 };
 
 use bytes::Bytes;
-use futures::future::{ok, Future, FutureExt, LocalBoxFuture};
 use h2::server::{self, Handshake};
 
 use crate::codec::{AsyncRead, AsyncWrite};
@@ -13,7 +13,7 @@ use crate::service::{pipeline_factory, IntoServiceFactory, Service, ServiceFacto
 
 use super::body::MessageBody;
 use super::builder::HttpServiceBuilder;
-use super::config::{DispatcherConfig, KeepAlive, ServiceConfig};
+use super::config::{DispatcherConfig, KeepAlive, OnRequest, ServiceConfig};
 use super::error::{DispatchError, ResponseError};
 use super::helpers::DataFactory;
 use super::request::Request;
@@ -27,7 +27,8 @@ pub struct HttpService<T, S, B, X = h1::ExpectHandler, U = h1::UpgradeHandler<T>
     expect: X,
     upgrade: Option<U>,
     on_connect: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
-    _t: PhantomData<(T, B)>,
+    on_request: cell::RefCell<Option<OnRequest<T>>>,
+    _t: marker::PhantomData<(T, B)>,
 }
 
 impl<T, S, B> HttpService<T, S, B>
@@ -74,7 +75,8 @@ where
             expect: h1::ExpectHandler,
             upgrade: None,
             on_connect: None,
-            _t: PhantomData,
+            on_request: cell::RefCell::new(None),
+            _t: marker::PhantomData,
         }
     }
 
@@ -89,7 +91,8 @@ where
             expect: h1::ExpectHandler,
             upgrade: None,
             on_connect: None,
-            _t: PhantomData,
+            on_request: cell::RefCell::new(None),
+            _t: marker::PhantomData,
         }
     }
 }
@@ -122,7 +125,8 @@ where
             srv: self.srv,
             upgrade: self.upgrade,
             on_connect: self.on_connect,
-            _t: PhantomData,
+            on_request: self.on_request,
+            _t: marker::PhantomData,
         }
     }
 
@@ -147,7 +151,8 @@ where
             srv: self.srv,
             expect: self.expect,
             on_connect: self.on_connect,
-            _t: PhantomData,
+            on_request: self.on_request,
+            _t: marker::PhantomData,
         }
     }
 
@@ -157,6 +162,12 @@ where
         f: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
     ) -> Self {
         self.on_connect = f;
+        self
+    }
+
+    /// Set on request callback.
+    pub(crate) fn on_request(self, f: Option<OnRequest<T>>) -> Self {
+        *self.on_request.borrow_mut() = f;
         self
     }
 }
@@ -195,9 +206,9 @@ where
         Error = DispatchError,
         InitError = (),
     > {
-        pipeline_factory(|io: TcpStream| {
+        pipeline_factory(|io: TcpStream| async move {
             let peer_addr = io.peer_addr().ok();
-            ok((io, Protocol::Http1, peer_addr))
+            Ok((io, Protocol::Http1, peer_addr))
         })
         .and_then(self)
     }
@@ -250,7 +261,7 @@ mod openssl {
                     .map_err(SslError::Ssl)
                     .map_init_err(|_| panic!()),
             )
-            .and_then(|io: SslStream<TcpStream>| {
+            .and_then(|io: SslStream<TcpStream>| async move {
                 let proto = if let Some(protos) = io.ssl().selected_alpn_protocol() {
                     if protos.windows(2).any(|window| window == b"h2") {
                         Protocol::Http2
@@ -261,7 +272,7 @@ mod openssl {
                     Protocol::Http1
                 };
                 let peer_addr = io.get_ref().peer_addr().ok();
-                ok((io, proto, peer_addr))
+                Ok((io, proto, peer_addr))
             })
             .and_then(self.map_err(SslError::Service))
         }
@@ -318,7 +329,7 @@ mod rustls {
                     .map_err(SslError::Ssl)
                     .map_init_err(|_| panic!()),
             )
-            .and_then(|io: TlsStream<TcpStream>| {
+            .and_then(|io: TlsStream<TcpStream>| async move {
                 let proto = io
                     .get_ref()
                     .1
@@ -332,7 +343,7 @@ mod rustls {
                     })
                     .unwrap_or(Protocol::Http1);
                 let peer_addr = io.get_ref().0.peer_addr().ok();
-                ok((io, proto, peer_addr))
+                Ok((io, proto, peer_addr))
             })
             .and_then(self.map_err(SslError::Service))
         }
@@ -370,16 +381,17 @@ where
     type Error = DispatchError;
     type InitError = ();
     type Service = HttpServiceHandler<T, S::Service, B, X::Service, U::Service>;
-    type Future = LocalBoxFuture<'static, Result<Self::Service, Self::InitError>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Service, Self::InitError>>>>;
 
     fn new_service(&self, _: ()) -> Self::Future {
         let fut = self.srv.new_service(());
         let fut_ex = self.expect.new_service(());
         let fut_upg = self.upgrade.as_ref().map(|f| f.new_service(()));
         let on_connect = self.on_connect.clone();
+        let on_request = self.on_request.borrow_mut().take();
         let cfg = self.cfg.clone();
 
-        async move {
+        Box::pin(async move {
             let service = fut
                 .await
                 .map_err(|e| log::error!("Init http service error: {:?}", e))?;
@@ -397,23 +409,23 @@ where
                 None
             };
 
-            let config = DispatcherConfig::new(cfg, service, expect, upgrade);
+            let config =
+                DispatcherConfig::new(cfg, service, expect, upgrade, on_request);
 
             Ok(HttpServiceHandler {
                 on_connect,
                 config: Rc::new(config),
-                _t: PhantomData,
+                _t: marker::PhantomData,
             })
-        }
-        .boxed_local()
+        })
     }
 }
 
 /// `Service` implementation for http transport
 pub struct HttpServiceHandler<T, S: Service, B, X: Service, U: Service> {
-    config: Rc<DispatcherConfig<S, X, U>>,
+    config: Rc<DispatcherConfig<T, S, X, U>>,
     on_connect: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
-    _t: PhantomData<(T, B, X)>,
+    _t: marker::PhantomData<(T, B, X)>,
 }
 
 impl<T, S, B, X, U> Service for HttpServiceHandler<T, S, B, X, U>
@@ -580,7 +592,7 @@ pin_project_lite::pin_project! {
         H2Handshake { data:
             Option<(
                 Handshake<T, Bytes>,
-                Rc<DispatcherConfig<S, X, U>>,
+                Rc<DispatcherConfig<T, S, X, U>>,
                 Option<Box<dyn DataFactory>>,
                 Option<net::SocketAddr>,
             )>,

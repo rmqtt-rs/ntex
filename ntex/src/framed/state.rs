@@ -1,12 +1,12 @@
 //! Framed transport dispatcher
 use std::task::{Context, Poll, Waker};
-use std::{cell::Cell, cell::RefCell, hash, io, mem, pin::Pin, rc::Rc};
+use std::{cell::Cell, cell::RefCell, future::Future, hash, io, mem, pin::Pin, rc::Rc};
 
-use futures::{future::poll_fn, ready};
+use slab::Slab;
 
 use crate::codec::{AsyncRead, AsyncWrite, Decoder, Encoder, Framed, FramedParts};
 use crate::task::LocalWaker;
-use crate::util::{Buf, BytesMut, Either};
+use crate::util::{poll_fn, Buf, BytesMut, Either};
 
 bitflags::bitflags! {
     pub struct Flags: u16 {
@@ -48,6 +48,21 @@ pub(crate) struct IoStateInner {
     dispatch_task: LocalWaker,
     read_buf: RefCell<BytesMut>,
     write_buf: RefCell<BytesMut>,
+    on_disconnect: RefCell<Slab<Option<LocalWaker>>>,
+}
+
+impl IoStateInner {
+    fn insert_flags(&self, f: Flags) {
+        let mut flags = self.flags.get();
+        flags.insert(f);
+        self.flags.set(flags);
+    }
+
+    fn remove_flags(&self, f: Flags) {
+        let mut flags = self.flags.get();
+        flags.remove(f);
+        self.flags.set(flags);
+    }
 }
 
 impl Clone for State {
@@ -86,6 +101,7 @@ impl State {
             write_task: LocalWaker::new(),
             read_buf: RefCell::new(BytesMut::new()),
             write_buf: RefCell::new(BytesMut::new()),
+            on_disconnect: RefCell::new(Slab::new()),
         }))
     }
 
@@ -106,6 +122,7 @@ impl State {
             write_task: LocalWaker::new(),
             read_buf: RefCell::new(parts.read_buf),
             write_buf: RefCell::new(parts.write_buf),
+            on_disconnect: RefCell::new(Slab::new()),
         }));
         (parts.io, parts.codec, state)
     }
@@ -113,23 +130,24 @@ impl State {
     #[inline]
     /// Create `State` instance with custom params
     pub fn with_params(
-        read_hw: u16,
-        write_hw: u16,
-        low_watermark: u16,
+        max_read_buf_size: u16,
+        max_write_buf_size: u16,
+        min_buf_size: u16,
         disconnect_timeout: u16,
     ) -> Self {
         State(Rc::new(IoStateInner {
             flags: Cell::new(Flags::empty()),
             error: Cell::new(None),
-            lw: Cell::new(low_watermark),
-            read_hw: Cell::new(read_hw),
-            write_hw: Cell::new(write_hw),
+            lw: Cell::new(min_buf_size),
+            read_hw: Cell::new(max_read_buf_size),
+            write_hw: Cell::new(max_write_buf_size),
             disconnect_timeout: Cell::new(disconnect_timeout),
             dispatch_task: LocalWaker::new(),
             read_task: LocalWaker::new(),
             write_task: LocalWaker::new(),
-            read_buf: RefCell::new(BytesMut::with_capacity(low_watermark as usize)),
-            write_buf: RefCell::new(BytesMut::with_capacity(low_watermark as usize)),
+            read_buf: RefCell::new(BytesMut::with_capacity(min_buf_size as usize)),
+            write_buf: RefCell::new(BytesMut::with_capacity(min_buf_size as usize)),
+            on_disconnect: RefCell::new(Slab::new()),
         }))
     }
 
@@ -166,70 +184,26 @@ impl State {
         self.0.flags.set(flags);
     }
 
-    #[doc(hidden)]
     #[inline]
+    #[doc(hidden)]
     /// Get current state flags
     pub fn flags(&self) -> Flags {
         self.0.flags.get()
     }
 
     #[inline]
-    /// Set read buffer high water mark size
+    /// Set read/write buffer sizes
     ///
-    /// By default read hw is 8kb
-    pub fn read_high_watermark(self, hw: u16) -> Self {
-        self.0.read_hw.set(hw);
-        self
-    }
-
-    #[inline]
-    /// Set read buffer high watermark size
-    ///
-    /// By default read hw is 8kb
-    pub fn set_read_high_watermark(&self, hw: u16) {
-        self.0.read_hw.set(hw)
-    }
-
-    #[inline]
-    /// Set write buffer high watermark size
-    ///
-    /// By default write hw is 8kb
-    pub fn write_high_watermark(self, hw: u16) -> Self {
-        self.0.write_hw.set(hw);
-        self
-    }
-
-    #[inline]
-    /// Set write buffer high watermark size
-    ///
-    /// By default write hw is 8kb
-    pub fn set_write_high_watermark(&self, hw: u16) {
-        self.0.write_hw.set(hw);
-    }
-
-    #[inline]
-    /// Set buffer low watermark size
-    ///
-    /// Low watermark is the same for read and write buffers.
-    /// By default lw value is 1kb.
-    pub fn low_watermark(self, lw: u16) -> Self {
-        self.0.lw.set(lw);
-        self
-    }
-
-    #[inline]
-    /// Set buffer low watermark size
-    ///
-    /// By default read hw is 1kb
-    pub fn set_low_watermark(self, lw: u16) {
-        self.0.lw.set(lw);
-    }
-
-    #[inline]
-    /// Set io disconnect timeout in secs
-    pub fn disconnect_timeout(self, timeout: u16) -> Self {
-        self.0.disconnect_timeout.set(timeout);
-        self
+    /// By default read max buf size is 8kb, write max buf size is 8kb
+    pub fn set_buffer_params(
+        &self,
+        max_read_buf_size: u16,
+        max_write_buf_size: u16,
+        min_buf_size: u16,
+    ) {
+        self.0.read_hw.set(max_read_buf_size);
+        self.0.write_hw.set(max_write_buf_size);
+        self.0.lw.set(min_buf_size);
     }
 
     #[inline]
@@ -239,8 +213,20 @@ impl State {
     }
 
     #[inline]
-    pub fn take_io_error(&self) -> Option<io::Error> {
-        self.0.error.take()
+    /// Notify when socket get disconnected
+    pub fn on_disconnect(&self) -> OnDisconnect {
+        OnDisconnect::new(self.0.clone(), self.0.flags.get().contains(Flags::IO_ERR))
+    }
+
+    fn notify_disconnect(&self) {
+        let mut slab = self.0.on_disconnect.borrow_mut();
+        for item in slab.iter_mut() {
+            if let Some(waker) = item.1 {
+                waker.wake();
+            } else {
+                *item.1 = Some(LocalWaker::default())
+            }
+        }
     }
 
     #[inline]
@@ -249,53 +235,19 @@ impl State {
         self.0.flags.get().contains(Flags::IO_ERR)
     }
 
-    #[inline]
-    pub fn is_io_shutdown(&self) -> bool {
+    pub(super) fn is_io_shutdown(&self) -> bool {
         self.0
             .flags
             .get()
             .intersects(Flags::IO_ERR | Flags::IO_SHUTDOWN)
     }
 
-    #[inline]
-    pub fn is_io_stop(&self) -> bool {
+    pub(super) fn is_io_stop(&self) -> bool {
         self.0.flags.get().contains(Flags::IO_STOP)
     }
 
-    #[inline]
-    /// Check if write buff is full
-    pub fn is_write_buf_full(&self) -> bool {
-        self.0.write_buf.borrow().len() >= self.0.write_hw.get() as usize
-    }
-
-    #[inline]
-    /// Check if read buff is full
-    pub fn is_read_buf_full(&self) -> bool {
-        self.0.read_buf.borrow().len() >= self.0.read_hw.get() as usize
-    }
-
-    #[inline]
-    /// Check if read buffer has new data
-    pub fn is_read_ready(&self) -> bool {
-        self.0.flags.get().contains(Flags::RD_READY)
-    }
-
-    /// read task must be paused if service is not ready (RD_PAUSED)
     pub(super) fn is_read_paused(&self) -> bool {
         self.0.flags.get().contains(Flags::RD_PAUSED)
-    }
-
-    #[inline]
-    /// Check if write task is ready
-    pub fn is_write_ready(&self) -> bool {
-        !self.0.flags.get().contains(Flags::WR_BACKPRESSURE)
-    }
-
-    #[inline]
-    /// Enable write back-persurre
-    pub fn enable_write_backpressure(&self) {
-        log::trace!("enable write back-pressure");
-        self.insert_flags(Flags::WR_BACKPRESSURE);
     }
 
     #[inline]
@@ -305,14 +257,8 @@ impl State {
     }
 
     #[inline]
-    /// Reset keep-alive error
-    pub fn reset_keepalive(&self) {
-        self.remove_flags(Flags::DSP_KEEPALIVE)
-    }
-
-    #[inline]
     /// Check is dispatcher marked stopped
-    pub fn is_dsp_stopped(&self) -> bool {
+    pub fn is_dispatcher_stopped(&self) -> bool {
         self.0.flags.get().contains(Flags::DSP_STOP)
     }
 
@@ -325,21 +271,36 @@ impl State {
             .intersects(Flags::IO_ERR | Flags::IO_SHUTDOWN | Flags::DSP_STOP)
     }
 
-    #[inline]
-    /// Initiate close connection procedure
-    pub fn close(&self) {
-        self.insert_flags(Flags::DSP_STOP);
-        self.0.dispatch_task.wake();
-    }
-
-    #[inline]
-    /// Gracefully shutdown all tasks
-    pub fn shutdown(&self) {
-        log::trace!("shutdown framed state");
-        self.insert_flags(Flags::DSP_STOP | Flags::IO_SHUTDOWN);
+    pub(crate) fn set_io_error(&self, err: Option<io::Error>) {
+        self.0.error.set(err);
         self.0.read_task.wake();
         self.0.write_task.wake();
         self.0.dispatch_task.wake();
+        self.insert_flags(Flags::IO_ERR | Flags::DSP_STOP);
+        self.notify_disconnect();
+    }
+
+    pub(super) fn set_wr_shutdown_complete(&self) {
+        if !self.0.flags.get().contains(Flags::IO_ERR) {
+            self.notify_disconnect();
+            self.insert_flags(Flags::IO_ERR);
+            self.0.read_task.wake();
+        }
+    }
+
+    pub(super) fn register_read_task(&self, waker: &Waker) {
+        self.0.read_task.register(waker);
+    }
+
+    #[inline]
+    /// Stop io tasks
+    ///
+    /// Wake dispatcher when read or write task is stopped.
+    pub fn stop_io(&self, waker: &Waker) {
+        self.insert_flags(Flags::IO_STOP);
+        self.0.read_task.wake();
+        self.0.write_task.wake();
+        self.0.dispatch_task.register(waker);
     }
 
     #[inline]
@@ -355,99 +316,10 @@ impl State {
         }
     }
 
-    pub(crate) fn set_io_error(&self, err: Option<io::Error>) {
-        self.0.error.set(err);
-        self.0.read_task.wake();
-        self.0.write_task.wake();
-        self.0.dispatch_task.wake();
-        self.insert_flags(Flags::IO_ERR | Flags::DSP_STOP);
-    }
-
-    pub(super) fn set_wr_shutdown_complete(&self) {
-        self.insert_flags(Flags::IO_ERR);
-        self.0.read_task.wake();
-    }
-
-    pub(super) fn register_read_task(&self, waker: &Waker) {
-        self.0.read_task.register(waker);
-    }
-
     #[inline]
-    /// Wake read io task if it is paused
-    pub fn dsp_restart_read_task(&self) {
-        let flags = self.0.flags.get();
-        if flags.contains(Flags::RD_PAUSED) {
-            self.remove_flags(Flags::RD_PAUSED);
-            self.0.read_task.wake();
-        }
-    }
-
-    #[inline]
-    /// Wake write io task
-    pub fn dsp_restart_write_task(&self) {
-        self.0.write_task.wake();
-    }
-
-    #[inline]
-    /// Wake read io task if it is not ready
-    ///
-    /// Only wakes if back-pressure is enabled on read task
-    /// otherwise read is already awake.
-    pub fn dsp_read_more_data(&self, waker: &Waker) {
-        let mut flags = self.0.flags.get();
-        flags.remove(Flags::RD_READY);
-        if flags.contains(Flags::RD_BUF_FULL) {
-            log::trace!("read back-pressure is enabled, wake io task");
-            flags.remove(Flags::RD_BUF_FULL);
-            self.0.read_task.wake();
-        }
-        self.0.flags.set(flags);
-        self.0.dispatch_task.register(waker);
-    }
-
-    #[inline]
-    /// Wait until write task flushes data to socket
-    ///
-    /// Write task must be waken up separately.
-    pub fn dsp_enable_write_backpressure(&self, waker: &Waker) {
-        self.insert_flags(Flags::WR_BACKPRESSURE);
-        self.0.dispatch_task.register(waker);
-    }
-
-    #[doc(hidden)]
-    #[inline]
-    /// Mark dispatcher as stopped
-    pub fn dsp_mark_stopped(&self) {
-        self.insert_flags(Flags::DSP_STOP);
-    }
-
-    #[inline]
-    /// Service is not ready, register dispatch task and
-    /// pause read io task
-    pub fn dsp_service_not_ready(&self, waker: &Waker) {
-        self.insert_flags(Flags::RD_PAUSED);
-        self.0.dispatch_task.register(waker);
-    }
-
-    #[inline]
-    /// Stop io tasks
-    pub fn dsp_stop_io(&self, waker: &Waker) {
-        self.insert_flags(Flags::IO_STOP);
-        self.0.read_task.wake();
-        self.0.write_task.wake();
-        self.0.dispatch_task.register(waker);
-    }
-
-    #[inline]
-    /// Wake dispatcher
-    pub fn dsp_wake_task(&self) {
-        self.0.dispatch_task.wake();
-    }
-
-    #[inline]
-    /// Register dispatcher task
-    pub fn dsp_register_task(&self, waker: &Waker) {
-        self.0.dispatch_task.register(waker);
+    /// Take io error if any occured
+    pub fn take_io_error(&self) -> Option<io::Error> {
+        self.0.error.take()
     }
 
     #[inline]
@@ -457,38 +329,66 @@ impl State {
     }
 
     #[inline]
-    /// Get mut access to read buffer
-    pub fn with_read_buf<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut BytesMut) -> R,
-    {
-        f(&mut self.0.read_buf.borrow_mut())
+    /// Reset keep-alive error
+    pub fn reset_keepalive(&self) {
+        self.remove_flags(Flags::DSP_KEEPALIVE)
     }
 
     #[inline]
-    /// Get mut access to write buffer
-    pub fn with_write_buf<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut BytesMut) -> R,
-    {
-        f(&mut self.0.write_buf.borrow_mut())
+    /// Wake dispatcher task
+    pub fn wake_dispatcher(&self) {
+        self.0.dispatch_task.wake();
+    }
+
+    #[inline]
+    /// Register dispatcher task
+    pub fn register_dispatcher(&self, waker: &Waker) {
+        self.0.dispatch_task.register(waker);
+    }
+
+    #[inline]
+    /// Mark dispatcher as stopped
+    pub fn dispatcher_stopped(&self) {
+        self.insert_flags(Flags::DSP_STOP);
+    }
+
+    #[inline]
+    /// Get api for read task
+    pub fn read(&'_ self) -> Read<'_> {
+        Read(self.0.as_ref())
+    }
+
+    #[inline]
+    /// Get api for write task
+    pub fn write(&'_ self) -> Write<'_> {
+        Write(self.0.as_ref())
+    }
+
+    #[inline]
+    /// Gracefully close connection
+    ///
+    /// First stop dispatcher, then dispatcher stops io tasks
+    pub fn close(&self) {
+        self.insert_flags(Flags::DSP_STOP);
+        self.0.dispatch_task.wake();
+    }
+
+    #[inline]
+    /// Force close connection
+    ///
+    /// Dispatcher does not wait for uncompleted responses, but flushes io buffers.
+    pub fn force_close(&self) {
+        log::trace!("force close framed object");
+        self.insert_flags(Flags::DSP_STOP | Flags::IO_SHUTDOWN);
+        self.0.read_task.wake();
+        self.0.write_task.wake();
+        self.0.dispatch_task.wake();
     }
 }
 
 impl State {
     #[inline]
-    /// Attempts to decode a frame from the read buffer.
-    pub fn decode_item<U>(
-        &self,
-        codec: &U,
-    ) -> Result<Option<<U as Decoder>::Item>, <U as Decoder>::Error>
-    where
-        U: Decoder,
-    {
-        codec.decode(&mut self.0.read_buf.borrow_mut())
-    }
-
-    #[inline]
+    /// Read incoming io stream and decode codec item.
     pub async fn next<T, U>(
         &self,
         io: &mut T,
@@ -528,44 +428,7 @@ impl State {
     }
 
     #[inline]
-    pub fn poll_next<T, U>(
-        &self,
-        io: &mut T,
-        codec: &U,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<Option<U::Item>, Either<U::Error, io::Error>>>
-    where
-        T: AsyncRead + AsyncWrite + Unpin,
-        U: Decoder,
-    {
-        let mut buf = self.0.read_buf.borrow_mut();
-
-        loop {
-            return match codec.decode(&mut buf) {
-                Ok(Some(el)) => Poll::Ready(Ok(Some(el))),
-                Ok(None) => {
-                    let n = ready!(crate::codec::poll_read_buf(
-                        Pin::new(&mut *io),
-                        cx,
-                        &mut *buf
-                    ))
-                    .map_err(Either::Right)?;
-                    if n == 0 {
-                        Poll::Ready(Ok(None))
-                    } else {
-                        continue;
-                    }
-                }
-                Err(err) => {
-                    self.set_io_error(None);
-                    Poll::Ready(Err(Either::Left(err)))
-                }
-            };
-        }
-    }
-
-    #[inline]
-    /// Encode item, send to a peer and flush
+    /// Encode item, send to a peer and then flush
     pub async fn send<T, U>(
         &self,
         io: &mut T,
@@ -591,85 +454,40 @@ impl State {
     }
 
     #[inline]
-    /// Write item to a buf and wake up io task
-    ///
-    /// Returns state of write buffer state, false is returned if write buffer if full.
-    pub fn write_item<U>(
+    pub fn poll_next<T, U>(
         &self,
-        item: U::Item,
+        io: &mut T,
         codec: &U,
-    ) -> Result<bool, <U as Encoder>::Error>
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<Option<U::Item>, Either<U::Error, io::Error>>>
     where
-        U: Encoder,
+        T: AsyncRead + AsyncWrite + Unpin,
+        U: Decoder,
     {
-        let flags = self.0.flags.get();
+        let mut buf = self.0.read_buf.borrow_mut();
 
-        if !flags.intersects(Flags::IO_ERR | Flags::IO_SHUTDOWN) {
-            let mut write_buf = self.0.write_buf.borrow_mut();
-            let is_write_sleep = write_buf.is_empty();
-
-            // make sure we've got room
-            let remaining = write_buf.capacity() - write_buf.len();
-            if remaining < self.0.lw.get() as usize {
-                write_buf.reserve((self.0.write_hw.get() as usize) - remaining);
-            }
-
-            // encode item and wake write task
-            codec.encode(item, &mut *write_buf).map(|_| {
-                if is_write_sleep {
-                    self.0.write_task.wake();
-                }
-                write_buf.len() < self.0.write_hw.get() as usize
-            })
-        } else {
-            Ok(true)
-        }
-    }
-
-    #[inline]
-    /// Write item to a buf and wake up io task
-    pub fn write_result<U, E>(
-        &self,
-        item: Result<Option<U::Item>, E>,
-        codec: &U,
-    ) -> Result<bool, Either<E, U::Error>>
-    where
-        U: Encoder,
-    {
-        let flags = self.0.flags.get();
-
-        if !flags.intersects(Flags::IO_ERR | Flags::ST_DSP_ERR) {
-            match item {
-                Ok(Some(item)) => {
-                    let mut write_buf = self.0.write_buf.borrow_mut();
-                    let is_write_sleep = write_buf.is_empty();
-
-                    // make sure we've got room
-                    let remaining = write_buf.capacity() - write_buf.len();
-                    if remaining < self.0.lw.get() as usize {
-                        write_buf.reserve((self.0.write_hw.get() as usize) - remaining);
+        loop {
+            return match codec.decode(&mut buf) {
+                Ok(Some(el)) => Poll::Ready(Ok(Some(el))),
+                Ok(None) => {
+                    match crate::codec::poll_read_buf(Pin::new(&mut *io), cx, &mut *buf)
+                    {
+                        Poll::Pending => Poll::Pending,
+                        Poll::Ready(Err(err)) => Poll::Ready(Err(Either::Right(err))),
+                        Poll::Ready(Ok(n)) => {
+                            if n == 0 {
+                                Poll::Ready(Ok(None))
+                            } else {
+                                continue;
+                            }
+                        }
                     }
-
-                    // encode item
-                    if let Err(err) = codec.encode(item, &mut write_buf) {
-                        log::trace!("Encoder error: {:?}", err);
-                        self.insert_flags(Flags::DSP_STOP | Flags::ST_DSP_ERR);
-                        self.0.dispatch_task.wake();
-                        return Err(Either::Right(err));
-                    } else if is_write_sleep {
-                        self.0.write_task.wake();
-                    }
-                    Ok(write_buf.len() < self.0.write_hw.get() as usize)
                 }
                 Err(err) => {
-                    self.insert_flags(Flags::DSP_STOP | Flags::ST_DSP_ERR);
-                    self.0.dispatch_task.wake();
-                    Err(Either::Left(err))
+                    self.set_io_error(None);
+                    Poll::Ready(Err(Either::Left(err)))
                 }
-                _ => Ok(true),
-            }
-        } else {
-            Ok(true)
+            };
         }
     }
 
@@ -803,9 +621,269 @@ impl State {
             Poll::Ready(Err(err)) => {
                 log::trace!("Error during flush: {}", err);
                 self.set_io_error(Some(err));
-                return Poll::Ready(false);
+                Poll::Ready(false)
             }
         }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct Write<'a>(&'a IoStateInner);
+
+impl<'a> Write<'a> {
+    #[inline]
+    /// Check if write task is ready
+    pub fn is_ready(&self) -> bool {
+        !self.0.flags.get().contains(Flags::WR_BACKPRESSURE)
+    }
+
+    #[inline]
+    /// Check if write buffer is full
+    pub fn is_full(&self) -> bool {
+        self.0.write_buf.borrow().len() >= self.0.write_hw.get() as usize
+    }
+
+    #[inline]
+    /// Wait until write task flushes data to io stream
+    ///
+    /// Write task must be waken up separately.
+    pub fn enable_backpressure(&self, waker: Option<&Waker>) {
+        log::trace!("enable write back-pressure");
+        self.0.insert_flags(Flags::WR_BACKPRESSURE);
+        if let Some(waker) = waker {
+            self.0.dispatch_task.register(waker);
+        }
+    }
+
+    #[inline]
+    /// Wake dispatcher task
+    pub fn wake_dispatcher(&self) {
+        self.0.dispatch_task.wake();
+    }
+
+    /// Get mut access to write buffer
+    pub fn with_buf<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut BytesMut) -> R,
+    {
+        let mut write_buf = self.0.write_buf.borrow_mut();
+        if write_buf.is_empty() {
+            self.0.write_task.wake();
+        }
+
+        f(&mut write_buf)
+    }
+
+    #[inline]
+    /// Write item to a buffer and wake up write task
+    ///
+    /// Returns write buffer state, false is returned if write buffer if full.
+    pub fn encode<U>(
+        &self,
+        item: U::Item,
+        codec: &U,
+    ) -> Result<bool, <U as Encoder>::Error>
+    where
+        U: Encoder,
+    {
+        let flags = self.0.flags.get();
+
+        if !flags.intersects(Flags::IO_ERR | Flags::IO_SHUTDOWN) {
+            let mut write_buf = self.0.write_buf.borrow_mut();
+            let is_write_sleep = write_buf.is_empty();
+
+            // make sure we've got room
+            let remaining = write_buf.capacity() - write_buf.len();
+            if remaining < self.0.lw.get() as usize {
+                write_buf.reserve((self.0.write_hw.get() as usize) - remaining);
+            }
+
+            // encode item and wake write task
+            codec.encode(item, &mut *write_buf).map(|_| {
+                if is_write_sleep {
+                    self.0.write_task.wake();
+                }
+                write_buf.len() < self.0.write_hw.get() as usize
+            })
+        } else {
+            Ok(true)
+        }
+    }
+
+    #[inline]
+    /// Write item to a buf and wake up io task
+    pub fn encode_result<U, E>(
+        &self,
+        item: Result<Option<U::Item>, E>,
+        codec: &U,
+    ) -> Result<bool, Either<E, U::Error>>
+    where
+        U: Encoder,
+    {
+        let flags = self.0.flags.get();
+
+        if !flags.intersects(Flags::IO_ERR | Flags::ST_DSP_ERR) {
+            match item {
+                Ok(Some(item)) => {
+                    let mut write_buf = self.0.write_buf.borrow_mut();
+                    let is_write_sleep = write_buf.is_empty();
+
+                    // make sure we've got room
+                    let remaining = write_buf.capacity() - write_buf.len();
+                    if remaining < self.0.lw.get() as usize {
+                        write_buf.reserve((self.0.write_hw.get() as usize) - remaining);
+                    }
+
+                    // encode item
+                    if let Err(err) = codec.encode(item, &mut write_buf) {
+                        log::trace!("Encoder error: {:?}", err);
+                        self.0.insert_flags(Flags::DSP_STOP | Flags::ST_DSP_ERR);
+                        self.0.dispatch_task.wake();
+                        return Err(Either::Right(err));
+                    } else if is_write_sleep {
+                        self.0.write_task.wake();
+                    }
+                    Ok(write_buf.len() < self.0.write_hw.get() as usize)
+                }
+                Err(err) => {
+                    self.0.insert_flags(Flags::DSP_STOP | Flags::ST_DSP_ERR);
+                    self.0.dispatch_task.wake();
+                    Err(Either::Left(err))
+                }
+                _ => Ok(true),
+            }
+        } else {
+            Ok(true)
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct Read<'a>(&'a IoStateInner);
+
+impl<'a> Read<'a> {
+    #[inline]
+    /// Check if read buffer has new data
+    pub fn is_ready(&self) -> bool {
+        self.0.flags.get().contains(Flags::RD_READY)
+    }
+
+    #[inline]
+    /// Check if read buffer is full
+    pub fn is_full(&self) -> bool {
+        self.0.read_buf.borrow().len() >= self.0.read_hw.get() as usize
+    }
+
+    #[inline]
+    /// Pause read task
+    ///
+    /// Also register dispatch task
+    pub fn pause(&self, waker: &Waker) {
+        self.0.insert_flags(Flags::RD_PAUSED);
+        self.0.dispatch_task.register(waker);
+    }
+
+    #[inline]
+    /// Wake read io task if it is paused
+    pub fn resume(&self) {
+        let flags = self.0.flags.get();
+        if flags.contains(Flags::RD_PAUSED) {
+            self.0.remove_flags(Flags::RD_PAUSED);
+            self.0.read_task.wake();
+        }
+    }
+
+    #[inline]
+    /// Wake read task and instruct to read more data
+    ///
+    /// Only wakes if back-pressure is enabled on read task
+    /// otherwise read is already awake.
+    pub fn wake(&self, waker: &Waker) {
+        let mut flags = self.0.flags.get();
+        flags.remove(Flags::RD_READY);
+        if flags.contains(Flags::RD_BUF_FULL) {
+            log::trace!("read back-pressure is enabled, wake io task");
+            flags.remove(Flags::RD_BUF_FULL);
+            self.0.read_task.wake();
+        }
+        self.0.flags.set(flags);
+        self.0.dispatch_task.register(waker);
+    }
+
+    #[inline]
+    /// Attempts to decode a frame from the read buffer.
+    pub fn decode<U>(
+        &self,
+        codec: &U,
+    ) -> Result<Option<<U as Decoder>::Item>, <U as Decoder>::Error>
+    where
+        U: Decoder,
+    {
+        codec.decode(&mut self.0.read_buf.borrow_mut())
+    }
+
+    /// Get mut access to read buffer
+    pub fn with_buf<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut BytesMut) -> R,
+    {
+        f(&mut self.0.read_buf.borrow_mut())
+    }
+}
+
+/// OnDisconnect future resolves when socket get disconnected
+#[must_use = "OnDisconnect do nothing unless polled"]
+pub struct OnDisconnect {
+    token: usize,
+    inner: Rc<IoStateInner>,
+}
+
+impl OnDisconnect {
+    fn new(inner: Rc<IoStateInner>, disconnected: bool) -> Self {
+        let token = inner.on_disconnect.borrow_mut().insert(if disconnected {
+            Some(LocalWaker::default())
+        } else {
+            None
+        });
+        Self { token, inner }
+    }
+
+    pub fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<()> {
+        let mut on_disconnect = self.inner.on_disconnect.borrow_mut();
+
+        let inner = unsafe { on_disconnect.get_unchecked_mut(self.token) };
+        if inner.is_none() {
+            let waker = LocalWaker::default();
+            waker.register(cx.waker());
+            *inner = Some(waker);
+        } else if !inner.as_mut().unwrap().register(cx.waker()) {
+            return Poll::Ready(());
+        }
+        Poll::Pending
+    }
+}
+
+impl Clone for OnDisconnect {
+    fn clone(&self) -> Self {
+        let token = self.inner.on_disconnect.borrow_mut().insert(None);
+        OnDisconnect {
+            token,
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl Future for OnDisconnect {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.get_mut().poll_ready(cx)
+    }
+}
+
+impl Drop for OnDisconnect {
+    fn drop(&mut self) {
+        self.inner.on_disconnect.borrow_mut().remove(self.token);
     }
 }
 
@@ -813,10 +891,8 @@ impl State {
 mod tests {
     use bytes::Bytes;
 
-    use crate::codec::BytesCodec;
-    use crate::testing::Io;
-
     use super::*;
+    use crate::{codec::BytesCodec, testing::Io, util::lazy};
 
     const BIN: &[u8] = b"GET /test HTTP/1\r\n\r\n";
     const TEXT: &str = "GET /test HTTP/1\r\n\r\n";
@@ -828,8 +904,8 @@ mod tests {
         client.write(TEXT);
 
         let state = State::new();
-        assert!(!state.is_read_buf_full());
-        assert!(!state.is_write_buf_full());
+        assert!(!state.read().is_full());
+        assert!(!state.write().is_full());
 
         let msg = state.next(&mut server, &BytesCodec).await.unwrap().unwrap();
         assert_eq!(msg, Bytes::from_static(BIN));
@@ -881,8 +957,41 @@ mod tests {
         state.remove_flags(Flags::IO_ERR | Flags::DSP_STOP);
 
         state.remove_flags(Flags::IO_ERR | Flags::DSP_STOP);
-        state.shutdown();
+        state.force_close();
         state.flags().contains(Flags::DSP_STOP);
         state.flags().contains(Flags::IO_SHUTDOWN);
+    }
+
+    #[crate::rt_test]
+    async fn test_on_disconnect() {
+        let state = State::new();
+        let mut waiter = state.on_disconnect();
+        assert_eq!(
+            lazy(|cx| Pin::new(&mut waiter).poll(cx)).await,
+            Poll::Pending
+        );
+        let mut waiter2 = waiter.clone();
+        assert_eq!(
+            lazy(|cx| Pin::new(&mut waiter2).poll(cx)).await,
+            Poll::Pending
+        );
+        state.set_wr_shutdown_complete();
+        assert_eq!(waiter.await, ());
+        assert_eq!(waiter2.await, ());
+
+        let mut waiter = state.on_disconnect();
+        assert_eq!(
+            lazy(|cx| Pin::new(&mut waiter).poll(cx)).await,
+            Poll::Ready(())
+        );
+
+        let state = State::new();
+        let mut waiter = state.on_disconnect();
+        assert_eq!(
+            lazy(|cx| Pin::new(&mut waiter).poll(cx)).await,
+            Poll::Pending
+        );
+        state.set_io_error(None);
+        assert_eq!(waiter.await, ());
     }
 }

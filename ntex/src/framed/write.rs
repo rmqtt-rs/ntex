@@ -71,7 +71,7 @@ where
             log::trace!("write io is closed");
             return Poll::Ready(());
         } else if this.state.is_io_stop() {
-            self.state.dsp_wake_task();
+            self.state.wake_dispatcher();
             return Poll::Ready(());
         }
 
@@ -165,7 +165,9 @@ where
 
                     // disconnect timeout
                     if let Some(ref mut delay) = delay {
-                        futures::ready!(Pin::new(delay).poll(cx));
+                        if let Poll::Pending = Pin::new(delay).poll(cx) {
+                            return Poll::Pending;
+                        }
                     }
                     this.state.set_wr_shutdown_complete();
                     log::trace!("write task is stopped after delay");

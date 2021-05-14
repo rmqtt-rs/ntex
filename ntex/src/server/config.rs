@@ -1,11 +1,13 @@
-use std::{cell::RefCell, fmt, io, marker::PhantomData, mem, net, rc::Rc};
+use std::{
+    cell::RefCell, fmt, future::Future, io, marker::PhantomData, mem, net, pin::Pin,
+    rc::Rc,
+};
 
-use futures::future::{ok, Future, FutureExt, LocalBoxFuture, Ready};
 use log::error;
 
 use crate::rt::net::TcpStream;
 use crate::service;
-use crate::util::{counter::CounterGuard, HashMap};
+use crate::util::{counter::CounterGuard, HashMap, Ready};
 
 use super::builder::bind_addr;
 use super::service::{
@@ -65,12 +67,10 @@ impl ServiceConfig {
     where
         F: Fn(&mut ServiceRuntime) + Send + Clone + 'static,
     {
-        self.apply_async::<_, Ready<Result<(), &'static str>>, &'static str>(
-            move |mut rt| {
-                f(&mut rt);
-                ok(())
-            },
-        )
+        self.apply_async::<_, Ready<(), &'static str>, &'static str>(move |mut rt| {
+            f(&mut rt);
+            Ready::Ok(())
+        })
     }
 
     /// Register async service configuration function.
@@ -128,7 +128,8 @@ impl InternalServiceFactory for ConfiguredService {
 
     fn create(
         &self,
-    ) -> LocalBoxFuture<'static, Result<Vec<(Token, BoxedServerService)>, ()>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<(Token, BoxedServerService)>, ()>>>>
+    {
         // configure services
         let rt = ServiceRuntime::new(self.topics.clone());
         let cfg_fut = self.rt.configure(ServiceRuntime(rt.0.clone()));
@@ -136,7 +137,7 @@ impl InternalServiceFactory for ConfiguredService {
         let tokens = self.services.clone();
 
         // construct services
-        async move {
+        Box::pin(async move {
             cfg_fut.await?;
             rt.validate();
 
@@ -154,7 +155,7 @@ impl InternalServiceFactory for ConfiguredService {
                             res.push((token, serv));
                         }
                         Err(_) => {
-                            error!("Can not construct service");
+                            error!("Cannot construct service");
                             return Err(());
                         }
                     }
@@ -165,22 +166,24 @@ impl InternalServiceFactory for ConfiguredService {
                         Box::new(StreamService::new(service::fn_service(
                             move |_: TcpStream| {
                                 error!("Service {:?} is not configured", name);
-                                ok::<_, ()>(())
+                                Ready::<_, ()>::Ok(())
                             },
                         ))),
                     ));
                 };
             }
             Ok(res)
-        }
-        .boxed_local()
+        })
     }
 }
 
 pub(super) trait ServiceRuntimeConfiguration {
     fn clone(&self) -> Box<dyn ServiceRuntimeConfiguration + Send>;
 
-    fn configure(&self, rt: ServiceRuntime) -> LocalBoxFuture<'static, Result<(), ()>>;
+    fn configure(
+        &self,
+        rt: ServiceRuntime,
+    ) -> Pin<Box<dyn Future<Output = Result<(), ()>>>>;
 }
 
 struct ConfigWrapper<F, R, E> {
@@ -204,7 +207,10 @@ where
         })
     }
 
-    fn configure(&self, rt: ServiceRuntime) -> LocalBoxFuture<'static, Result<(), ()>> {
+    fn configure(
+        &self,
+        rt: ServiceRuntime,
+    ) -> Pin<Box<dyn Future<Output = Result<(), ()>>>> {
         let f = self.f.clone();
         Box::pin(async move {
             (f)(rt).await.map_err(|e| {
@@ -223,7 +229,7 @@ pub struct ServiceRuntime(Rc<RefCell<ServiceRuntimeInner>>);
 struct ServiceRuntimeInner {
     names: HashMap<String, Token>,
     services: HashMap<Token, BoxedNewService>,
-    onstart: Vec<LocalBoxFuture<'static, ()>>,
+    onstart: Vec<Pin<Box<dyn Future<Output = ()>>>>,
 }
 
 impl ServiceRuntime {
@@ -275,7 +281,7 @@ impl ServiceRuntime {
     where
         F: Future<Output = ()> + 'static,
     {
-        self.0.borrow_mut().onstart.push(fut.boxed_local())
+        self.0.borrow_mut().onstart.push(Box::pin(fut))
     }
 }
 
@@ -287,7 +293,7 @@ type BoxedNewService = Box<
         InitError = (),
         Config = (),
         Service = BoxedServerService,
-        Future = LocalBoxFuture<'static, Result<BoxedServerService, ()>>,
+        Future = Pin<Box<dyn Future<Output = Result<BoxedServerService, ()>>>>,
     >,
 >;
 
@@ -309,19 +315,18 @@ where
     type InitError = ();
     type Config = ();
     type Service = BoxedServerService;
-    type Future = LocalBoxFuture<'static, Result<BoxedServerService, ()>>;
+    type Future = Pin<Box<dyn Future<Output = Result<BoxedServerService, ()>>>>;
 
     fn new_service(&self, _: ()) -> Self::Future {
         let fut = self.inner.new_service(());
-        async move {
+        Box::pin(async move {
             match fut.await {
                 Ok(s) => Ok(Box::new(StreamService::new(s)) as BoxedServerService),
                 Err(e) => {
-                    error!("Can not construct service: {:?}", e);
+                    error!("Cannot construct service: {:?}", e);
                     Err(())
                 }
             }
-        }
-        .boxed_local()
+        })
     }
 }

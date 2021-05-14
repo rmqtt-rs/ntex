@@ -1,15 +1,13 @@
-use std::marker::PhantomData;
-use std::net::SocketAddr;
-use std::task::{Context, Poll};
-use std::time::Duration;
+use std::{
+    future::Future, marker::PhantomData, net::SocketAddr, pin::Pin, task::Context,
+    task::Poll, time::Duration,
+};
 
-use futures::future::{err, ok, LocalBoxFuture, Ready};
-use futures::{FutureExt, TryFutureExt};
 use log::error;
 
 use crate::rt::spawn;
 use crate::service::{Service, ServiceFactory};
-use crate::util::counter::CounterGuard;
+use crate::util::{counter::CounterGuard, Ready};
 
 use super::socket::{FromStream, Stream};
 use super::Token;
@@ -37,7 +35,7 @@ pub(super) trait InternalServiceFactory: Send {
 
     fn create(
         &self,
-    ) -> LocalBoxFuture<'static, Result<Vec<(Token, BoxedServerService)>, ()>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<(Token, BoxedServerService)>, ()>>>>;
 }
 
 pub(super) type BoxedServerService = Box<
@@ -45,7 +43,7 @@ pub(super) type BoxedServerService = Box<
         Request = (Option<CounterGuard>, ServerMessage),
         Response = (),
         Error = (),
-        Future = Ready<Result<(), ()>>,
+        Future = Ready<(), ()>,
     >,
 >;
 
@@ -69,7 +67,7 @@ where
     type Request = (Option<CounterGuard>, ServerMessage);
     type Response = ();
     type Error = ();
-    type Future = Ready<Result<(), ()>>;
+    type Future = Ready<(), ()>;
 
     #[inline]
     fn poll_ready(&self, ctx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -85,7 +83,7 @@ where
         match req {
             ServerMessage::Connect(stream) => {
                 let stream = FromStream::from_stream(stream).map_err(|e| {
-                    error!("Can not convert to an async io stream: {}", e);
+                    error!("Cannot convert to an async io stream: {}", e);
                 });
 
                 if let Ok(stream) = stream {
@@ -94,12 +92,12 @@ where
                         let _ = f.await;
                         drop(guard);
                     });
-                    ok(())
+                    Ready::Ok(())
                 } else {
-                    err(())
+                    Ready::Err(())
                 }
             }
-            _ => ok(()),
+            _ => Ready::Ok(()),
         }
     }
 }
@@ -154,17 +152,21 @@ where
 
     fn create(
         &self,
-    ) -> LocalBoxFuture<'static, Result<Vec<(Token, BoxedServerService)>, ()>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<(Token, BoxedServerService)>, ()>>>>
+    {
         let token = self.token;
-        self.inner
-            .create()
-            .new_service(())
-            .map_err(|_| ())
-            .map_ok(move |inner| {
-                let service: BoxedServerService = Box::new(StreamService::new(inner));
-                vec![(token, service)]
-            })
-            .boxed_local()
+        let fut = self.inner.create().new_service(());
+
+        Box::pin(async move {
+            match fut.await {
+                Ok(inner) => {
+                    let service: BoxedServerService =
+                        Box::new(StreamService::new(inner));
+                    Ok(vec![(token, service)])
+                }
+                Err(_) => Err(()),
+            }
+        })
     }
 }
 
@@ -179,7 +181,8 @@ impl InternalServiceFactory for Box<dyn InternalServiceFactory> {
 
     fn create(
         &self,
-    ) -> LocalBoxFuture<'static, Result<Vec<(Token, BoxedServerService)>, ()>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<(Token, BoxedServerService)>, ()>>>>
+    {
         self.as_ref().create()
     }
 }

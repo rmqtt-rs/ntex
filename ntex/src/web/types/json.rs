@@ -1,14 +1,8 @@
 //! Json extractor/responder
 
-use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use std::{fmt, ops};
+use std::{fmt, future::Future, ops, pin::Pin, sync::Arc, task::Context, task::Poll};
 
 use bytes::BytesMut;
-use futures::future::{ready, FutureExt, LocalBoxFuture, Ready};
-use futures::StreamExt;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -16,8 +10,10 @@ use serde::Serialize;
 use crate::http::encoding::Decoder;
 use crate::http::header::CONTENT_LENGTH;
 use crate::http::{HttpMessage, Payload, Response, StatusCode};
+use crate::util::next;
 use crate::web::error::{ErrorRenderer, JsonError, JsonPayloadError, WebResponseError};
-use crate::web::{FromRequest, HttpRequest, Responder};
+use crate::web::responder::{Ready, Responder};
+use crate::web::{FromRequest, HttpRequest};
 
 /// Json helper
 ///
@@ -35,9 +31,8 @@ use crate::web::{FromRequest, HttpRequest, Responder};
 ///
 /// ```rust
 /// use ntex::web;
-/// use serde_derive::Deserialize;
 ///
-/// #[derive(Deserialize)]
+/// #[derive(serde::Deserialize)]
 /// struct Info {
 ///     username: String,
 /// }
@@ -62,9 +57,8 @@ use crate::web::{FromRequest, HttpRequest, Responder};
 ///
 /// ```rust
 /// use ntex::web;
-/// use serde_derive::Serialize;
 ///
-/// #[derive(Serialize)]
+/// #[derive(serde::Serialize)]
 /// struct MyObj {
 ///     name: String,
 /// }
@@ -127,14 +121,13 @@ where
     fn respond_to(self, req: &HttpRequest) -> Self::Future {
         let body = match serde_json::to_string(&self.0) {
             Ok(body) => body,
-            Err(e) => return ready(e.error_response(req)),
+            Err(e) => return e.error_response(req).into(),
         };
 
-        ready(
-            Response::build(StatusCode::OK)
-                .content_type("application/json")
-                .body(body),
-        )
+        Response::build(StatusCode::OK)
+            .content_type("application/json")
+            .body(body)
+            .into()
     }
 }
 
@@ -151,9 +144,8 @@ where
 ///
 /// ```rust
 /// use ntex::web;
-/// use serde_derive::Deserialize;
 ///
-/// #[derive(Deserialize)]
+/// #[derive(serde::Deserialize)]
 /// struct Info {
 ///     username: String,
 /// }
@@ -175,7 +167,7 @@ where
     T: DeserializeOwned + 'static,
 {
     type Error = JsonPayloadError;
-    type Future = LocalBoxFuture<'static, Result<Self, Self::Error>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self, Self::Error>>>>;
 
     #[inline]
     fn from_request(req: &HttpRequest, payload: &mut Payload) -> Self::Future {
@@ -185,9 +177,9 @@ where
             .map(|c| (c.limit, c.content_type.clone()))
             .unwrap_or((32768, None));
 
-        JsonBody::new(req, payload, ctype)
-            .limit(limit)
-            .map(move |res| match res {
+        let fut = JsonBody::new(req, payload, ctype).limit(limit);
+        Box::pin(async move {
+            match fut.await {
                 Err(e) => {
                     log::debug!(
                         "Failed to deserialize Json from payload. \
@@ -197,8 +189,8 @@ where
                     Err(e)
                 }
                 Ok(data) => Ok(Json(data)),
-            })
-            .boxed_local()
+            }
+        })
     }
 }
 
@@ -207,9 +199,8 @@ where
 /// ```rust
 /// use ntex::http::error;
 /// use ntex::web::{self, App, FromRequest, HttpResponse};
-/// use serde_derive::Deserialize;
 ///
-/// #[derive(Deserialize)]
+/// #[derive(serde::Deserialize)]
 /// struct Info {
 ///     username: String,
 /// }
@@ -281,7 +272,7 @@ struct JsonBody<U> {
     #[cfg(not(feature = "compress"))]
     stream: Option<Payload>,
     err: Option<JsonPayloadError>,
-    fut: Option<LocalBoxFuture<'static, Result<U, JsonPayloadError>>>,
+    fut: Option<Pin<Box<dyn Future<Output = Result<U, JsonPayloadError>>>>>,
 }
 
 impl<U> JsonBody<U>
@@ -363,22 +354,19 @@ where
         }
         let mut stream = self.stream.take().unwrap();
 
-        self.fut = Some(
-            async move {
-                let mut body = BytesMut::with_capacity(8192);
+        self.fut = Some(Box::pin(async move {
+            let mut body = BytesMut::with_capacity(8192);
 
-                while let Some(item) = stream.next().await {
-                    let chunk = item?;
-                    if (body.len() + chunk.len()) > limit {
-                        return Err(JsonPayloadError::Overflow);
-                    } else {
-                        body.extend_from_slice(&chunk);
-                    }
+            while let Some(item) = next(&mut stream).await {
+                let chunk = item?;
+                if (body.len() + chunk.len()) > limit {
+                    return Err(JsonPayloadError::Overflow);
+                } else {
+                    body.extend_from_slice(&chunk);
                 }
-                Ok(serde_json::from_slice::<U>(&body)?)
             }
-            .boxed_local(),
-        );
+            Ok(serde_json::from_slice::<U>(&body)?)
+        }));
 
         self.poll(cx)
     }
@@ -387,13 +375,14 @@ where
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use serde_derive::{Deserialize, Serialize};
 
     use super::*;
     use crate::http::header;
     use crate::web::test::{from_request, respond_to, TestRequest};
 
-    #[derive(Serialize, Deserialize, PartialEq, Debug, derive_more::Display)]
+    #[derive(
+        serde::Serialize, serde::Deserialize, PartialEq, Debug, derive_more::Display,
+    )]
     struct MyObject {
         name: String,
     }

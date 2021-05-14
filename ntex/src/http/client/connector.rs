@@ -1,14 +1,11 @@
-use std::rc::Rc;
-use std::task::{Context, Poll};
-use std::time::Duration;
-
-use futures::future::{err, Either, Ready};
+use std::{rc::Rc, task::Context, task::Poll, time::Duration};
 
 use crate::codec::{AsyncRead, AsyncWrite};
-use crate::connect::{self, Connect as TcpConnect, Connector as TcpConnector};
+use crate::connect::{Connect as TcpConnect, Connector as TcpConnector};
 use crate::http::{Protocol, Uri};
 use crate::service::{apply_fn, boxed, Service};
 use crate::util::timeout::{TimeoutError, TimeoutService};
+use crate::util::{Either, Ready};
 
 use super::connection::Connection;
 use super::error::ConnectError;
@@ -47,8 +44,6 @@ pub struct Connector {
     limit: usize,
     connector: BoxedConnector,
     ssl_connector: Option<BoxedConnector>,
-    #[allow(dead_code)]
-    resolver: connect::DnsResolver,
 }
 
 trait Io: AsyncRead + AsyncWrite + Unpin {}
@@ -56,15 +51,15 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Io for T {}
 
 impl Default for Connector {
     fn default() -> Self {
-        Connector::new(connect::default_resolver())
+        Connector::new()
     }
 }
 
 impl Connector {
-    pub fn new(resolver: connect::DnsResolver) -> Connector {
+    pub fn new() -> Connector {
         let conn = Connector {
             connector: boxed::service(
-                TcpConnector::new(resolver.clone())
+                TcpConnector::new()
                     .map(|io| (Box::new(io) as Box<dyn Io>, Protocol::Http1))
                     .map_err(ConnectError::from),
             ),
@@ -74,7 +69,6 @@ impl Connector {
             conn_keep_alive: Duration::from_secs(15),
             disconnect_timeout: Duration::from_millis(3000),
             limit: 100,
-            resolver,
         };
 
         #[cfg(feature = "openssl")]
@@ -84,7 +78,7 @@ impl Connector {
             let mut ssl = OpensslConnector::builder(SslMethod::tls()).unwrap();
             let _ = ssl
                 .set_alpn_protos(b"\x02h2\x08http/1.1")
-                .map_err(|e| error!("Can not set ALPN protocol: {:?}", e));
+                .map_err(|e| error!("Cannot set ALPN protocol: {:?}", e));
             conn.openssl(ssl.build())
         }
         #[cfg(all(not(feature = "openssl"), feature = "rustls"))]
@@ -117,23 +111,19 @@ impl Connector {
     pub fn openssl(self, connector: OpensslConnector) -> Self {
         use crate::connect::openssl::OpensslConnector;
 
-        let resolver = self.resolver.clone();
-
         const H2: &[u8] = b"h2";
-        self.secure_connector(OpensslConnector::with_resolver(connector, resolver).map(
-            |sock| {
-                let h2 = sock
-                    .ssl()
-                    .selected_alpn_protocol()
-                    .map(|protos| protos.windows(2).any(|w| w == H2))
-                    .unwrap_or(false);
-                if h2 {
-                    (sock, Protocol::Http2)
-                } else {
-                    (sock, Protocol::Http1)
-                }
-            },
-        ))
+        self.secure_connector(OpensslConnector::new(connector).map(|sock| {
+            let h2 = sock
+                .ssl()
+                .selected_alpn_protocol()
+                .map(|protos| protos.windows(2).any(|w| w == H2))
+                .unwrap_or(false);
+            if h2 {
+                (sock, Protocol::Http2)
+            } else {
+                (sock, Protocol::Http1)
+            }
+        }))
     }
 
     #[cfg(feature = "rustls")]
@@ -141,24 +131,20 @@ impl Connector {
     pub fn rustls(self, connector: Arc<ClientConfig>) -> Self {
         use crate::connect::rustls::{RustlsConnector, Session};
 
-        let resolver = self.resolver.clone();
-
         const H2: &[u8] = b"h2";
-        self.secure_connector(RustlsConnector::with_resolver(connector, resolver).map(
-            |sock| {
-                let h2 = sock
-                    .get_ref()
-                    .1
-                    .get_alpn_protocol()
-                    .map(|protos| protos.windows(2).any(|w| w == H2))
-                    .unwrap_or(false);
-                if h2 {
-                    (Box::new(sock) as Box<dyn Io>, Protocol::Http2)
-                } else {
-                    (Box::new(sock) as Box<dyn Io>, Protocol::Http1)
-                }
-            },
-        ))
+        self.secure_connector(RustlsConnector::new(connector).map(|sock| {
+            let h2 = sock
+                .get_ref()
+                .1
+                .get_alpn_protocol()
+                .map(|protos| protos.windows(2).any(|w| w == H2))
+                .unwrap_or(false);
+            if h2 {
+                (Box::new(sock) as Box<dyn Io>, Protocol::Http2)
+            } else {
+                (Box::new(sock) as Box<dyn Io>, Protocol::Http1)
+            }
+        }))
     }
 
     /// Set total number of simultaneous connections per type of scheme.
@@ -191,7 +177,7 @@ impl Connector {
         self
     }
 
-    /// Set server connection disconnect timeout in milliseconds.
+    /// Set server connection disconnect timeout.
     ///
     /// Defines a timeout for disconnect connection. If a disconnect procedure does not complete
     /// within this time, the socket get dropped. This timeout affects only secure connections.
@@ -318,7 +304,7 @@ where
     type Response = <Pool<T> as Service>::Response;
     type Error = ConnectError;
     type Future =
-        Either<<Pool<T> as Service>::Future, Ready<Result<Self::Response, Self::Error>>>;
+        Either<<Pool<T> as Service>::Future, Ready<Self::Response, Self::Error>>;
 
     #[inline]
     fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -356,7 +342,7 @@ where
                 if let Some(ref conn) = self.ssl_pool {
                     Either::Left(conn.call(req))
                 } else {
-                    Either::Right(err(ConnectError::SslIsNotSupported))
+                    Either::Right(Ready::Err(ConnectError::SslIsNotSupported))
                 }
             }
             _ => Either::Left(self.tcp_pool.call(req)),
@@ -367,7 +353,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::future::lazy;
+    use crate::util::lazy;
 
     #[crate::rt_test]
     async fn test_readiness() {

@@ -1,5 +1,65 @@
 # Changes
 
+## [0.3.15] - 2021-04-11
+
+* Move various utils to ntex-util crate
+
+## [0.3.14] - 2021-04-03
+
+* server: prevent double socket registration if accept loop is in back-pressure state
+
+* util: add custom Ready, Either future and several helper functions
+
+* drop trust-dns, use blocking calls
+
+* reduce futures crate dependencies
+
+* make url crate optional
+
+## [0.3.13] - 2021-03-26
+
+* framed: add socket disconnect notification
+
+* http: wake up reader on h1 payload error
+
+* ws: add sink disconnect notification
+
+* fix wrong api docs
+
+## [0.3.12] - 2021-03-18
+
+* http: add per request handler service for http1
+
+## [0.3.11] - 2021-03-16
+
+* web: use patterns for scope's prefix definitions
+
+* web: allow case-insensitive request matching on scope level
+
+* web: add helper method `App::finish()`, creates service factory with default `AppConfig`
+
+* web: add `.filter()` method, allows to register request filters
+
+## [0.3.10] - 2021-03-15
+
+* add buffer_params() api
+
+## [0.3.9] - 2021-03-15
+
+* framed: refactor api
+
+* update socket2 0.4
+
+## [0.3.8] - 2021-03-11
+
+* http: fix expect/continue support, wake up write task
+
+* framed: wakeup write task if write buf has new data
+
+## [0.3.7] - 2021-03-10
+
+* http: Fix service error handling for h1 proto
+
 ## [0.3.6] - 2021-03-06
 
 * http.client: Fix WsConnection::start() definition

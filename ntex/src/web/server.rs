@@ -1,13 +1,9 @@
-use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
-use std::{fmt, io, net};
+use std::{fmt, io, marker::PhantomData, net, sync::Arc, sync::Mutex};
 
 #[cfg(feature = "openssl")]
 use crate::server::openssl::{AlpnError, SslAcceptor, SslAcceptorBuilder};
 #[cfg(feature = "rustls")]
 use crate::server::rustls::ServerConfig as RustlsServerConfig;
-#[cfg(unix)]
-use futures::future::ok;
 
 #[cfg(unix)]
 use crate::http::Protocol;
@@ -233,30 +229,21 @@ where
     }
 
     #[inline]
-    /// Set read buffer high water mark size
+    /// Set read/write buffer params
     ///
-    /// By default read hw is 8kb
-    pub fn read_high_watermark(self, hw: u16) -> Self {
-        self.config.lock().unwrap().read_hw = hw;
-        self
-    }
-
-    #[inline]
-    /// Set write buffer high watermark size
-    ///
-    /// By default write hw is 8kb
-    pub fn write_high_watermark(self, hw: u16) -> Self {
-        self.config.lock().unwrap().write_hw = hw;
-        self
-    }
-
-    #[inline]
-    /// Set buffer low watermark size
-    ///
-    /// Low watermark is the same for read and write buffers.
-    /// By default low watermark value is 1kb.
-    pub fn low_watermark(self, lw: u16) -> Self {
-        self.config.lock().unwrap().lw = lw;
+    /// By default read buffer is 8kb, write buffer is 8kb
+    pub fn buffer_params(
+        self,
+        max_read_buf_size: u16,
+        max_write_buf_size: u16,
+        min_buf_size: u16,
+    ) -> Self {
+        {
+            let mut cfg = self.config.lock().unwrap();
+            cfg.read_hw = max_read_buf_size;
+            cfg.write_hw = max_write_buf_size;
+            cfg.lw = min_buf_size;
+        }
         self
     }
 
@@ -284,9 +271,7 @@ where
                     .keep_alive(c.keep_alive)
                     .client_timeout(c.client_timeout)
                     .disconnect_timeout(c.client_disconnect)
-                    .low_watermark(c.lw)
-                    .read_high_watermark(c.read_hw)
-                    .write_high_watermark(c.write_hw)
+                    .buffer_params(c.read_hw, c.write_hw, c.lw)
                     .finish(map_config(factory(), move |_| cfg.clone()))
                     .tcp()
             },
@@ -331,9 +316,7 @@ where
                     .client_timeout(c.client_timeout)
                     .disconnect_timeout(c.client_disconnect)
                     .ssl_handshake_timeout(c.handshake_timeout)
-                    .low_watermark(c.lw)
-                    .read_high_watermark(c.read_hw)
-                    .write_high_watermark(c.write_hw)
+                    .buffer_params(c.read_hw, c.write_hw, c.lw)
                     .finish(map_config(factory(), move |_| cfg.clone()))
                     .openssl(acceptor.clone())
             },
@@ -378,9 +361,7 @@ where
                     .client_timeout(c.client_timeout)
                     .disconnect_timeout(c.client_disconnect)
                     .ssl_handshake_timeout(c.handshake_timeout)
-                    .low_watermark(c.lw)
-                    .read_high_watermark(c.read_hw)
-                    .write_high_watermark(c.write_hw)
+                    .buffer_params(c.read_hw, c.write_hw, c.lw)
                     .finish(map_config(factory(), move |_| cfg.clone()))
                     .rustls(config.clone())
             },
@@ -424,7 +405,7 @@ where
             } else {
                 Err(io::Error::new(
                     io::ErrorKind::Other,
-                    "Can not bind to address.",
+                    "Cannot bind to address.",
                 ))
             }
         } else {
@@ -496,13 +477,14 @@ where
                 socket_addr,
                 c.host.clone().unwrap_or_else(|| format!("{}", socket_addr)),
             );
-            pipeline_factory(|io: UnixStream| ok((io, Protocol::Http1, None))).and_then(
+            pipeline_factory(|io: UnixStream| {
+                crate::util::Ready::Ok((io, Protocol::Http1, None))
+            })
+            .and_then(
                 HttpService::build()
                     .keep_alive(c.keep_alive)
                     .client_timeout(c.client_timeout)
-                    .low_watermark(c.lw)
-                    .read_high_watermark(c.read_hw)
-                    .write_high_watermark(c.write_hw)
+                    .buffer_params(c.read_hw, c.write_hw, c.lw)
                     .finish(map_config(factory(), move |_| config.clone())),
             )
         })?;
@@ -536,16 +518,16 @@ where
                     socket_addr,
                     c.host.clone().unwrap_or_else(|| format!("{}", socket_addr)),
                 );
-                pipeline_factory(|io: UnixStream| ok((io, Protocol::Http1, None)))
-                    .and_then(
-                        HttpService::build()
-                            .keep_alive(c.keep_alive)
-                            .client_timeout(c.client_timeout)
-                            .low_watermark(c.lw)
-                            .read_high_watermark(c.read_hw)
-                            .write_high_watermark(c.write_hw)
-                            .finish(map_config(factory(), move |_| config.clone())),
-                    )
+                pipeline_factory(|io: UnixStream| {
+                    crate::util::Ready::Ok((io, Protocol::Http1, None))
+                })
+                .and_then(
+                    HttpService::build()
+                        .keep_alive(c.keep_alive)
+                        .client_timeout(c.client_timeout)
+                        .buffer_params(c.read_hw, c.write_hw, c.lw)
+                        .finish(map_config(factory(), move |_| config.clone())),
+                )
             },
         )?;
         Ok(self)

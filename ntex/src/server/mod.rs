@@ -1,15 +1,11 @@
 //! General purpose tcp server
 #![allow(clippy::type_complexity)]
-use std::error::Error;
-use std::future::Future;
-use std::io;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
+use std::{future::Future, io, pin::Pin};
 
-use futures::channel::mpsc::UnboundedSender;
-use futures::channel::oneshot;
-use futures::FutureExt;
+use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::oneshot;
 
 use crate::util::counter::Counter;
 
@@ -75,7 +71,7 @@ thread_local! {
 /// Ssl error combinded with service error.
 #[derive(Debug)]
 pub enum SslError<E> {
-    Ssl(Box<dyn Error>),
+    Ssl(Box<dyn std::error::Error>),
     Service(E),
 }
 
@@ -112,11 +108,11 @@ impl Server {
     }
 
     fn signal(&self, sig: signals::Signal) {
-        let _ = self.0.unbounded_send(ServerCommand::Signal(sig));
+        let _ = self.0.send(ServerCommand::Signal(sig));
     }
 
     fn worker_faulted(&self, idx: usize) {
-        let _ = self.0.unbounded_send(ServerCommand::WorkerFaulted(idx));
+        let _ = self.0.send(ServerCommand::WorkerFaulted(idx));
     }
 
     /// Pause accepting incoming connections
@@ -125,15 +121,19 @@ impl Server {
     /// All opened connection remains active.
     pub fn pause(&self) -> impl Future<Output = ()> {
         let (tx, rx) = oneshot::channel();
-        let _ = self.0.unbounded_send(ServerCommand::Pause(tx));
-        rx.map(|_| ())
+        let _ = self.0.send(ServerCommand::Pause(tx));
+        async move {
+            let _ = rx.await;
+        }
     }
 
     /// Resume accepting incoming connections
     pub fn resume(&self) -> impl Future<Output = ()> {
         let (tx, rx) = oneshot::channel();
-        let _ = self.0.unbounded_send(ServerCommand::Resume(tx));
-        rx.map(|_| ())
+        let _ = self.0.send(ServerCommand::Resume(tx));
+        async move {
+            let _ = rx.await;
+        }
     }
 
     /// Stop incoming connection processing, stop all workers and exit.
@@ -141,11 +141,13 @@ impl Server {
     /// If server starts with `spawn()` method, then spawned thread get terminated.
     pub fn stop(&self, graceful: bool) -> impl Future<Output = ()> {
         let (tx, rx) = oneshot::channel();
-        let _ = self.0.unbounded_send(ServerCommand::Stop {
+        let _ = self.0.send(ServerCommand::Stop {
             graceful,
             completion: Some(tx),
         });
-        rx.map(|_| ())
+        async move {
+            let _ = rx.await;
+        }
     }
 }
 
@@ -163,7 +165,7 @@ impl Future for Server {
 
         if this.1.is_none() {
             let (tx, rx) = oneshot::channel();
-            if this.0.unbounded_send(ServerCommand::Notify(tx)).is_err() {
+            if this.0.send(ServerCommand::Notify(tx)).is_err() {
                 return Poll::Ready(Ok(()));
             }
             this.1 = Some(rx);

@@ -1,11 +1,7 @@
-use std::convert::TryFrom;
-use std::error::Error;
-use std::rc::Rc;
-use std::time::Duration;
-use std::{fmt, net};
+use std::{convert::TryFrom, error::Error, fmt, net, rc::Rc, time::Duration};
 
 use bytes::Bytes;
-use futures::Stream;
+use futures_core::Stream;
 use serde::Serialize;
 
 #[cfg(feature = "cookie")]

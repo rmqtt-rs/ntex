@@ -1,19 +1,13 @@
-use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::Duration;
-use std::{io, mem, net};
+use std::{future::Future, io, mem, net, pin::Pin, time::Duration};
 
-use futures::channel::mpsc::{unbounded, UnboundedReceiver};
-use futures::channel::oneshot;
-use futures::future::ready;
-use futures::stream::FuturesUnordered;
-use futures::{ready, Future, FutureExt, Stream, StreamExt};
 use log::{error, info};
 use socket2::{Domain, SockAddr, Socket, Type};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+use tokio::sync::oneshot;
 
-use crate::rt::net::TcpStream;
-use crate::rt::time::{sleep_until, Instant};
-use crate::rt::{spawn, System};
+use crate::rt::{net::TcpStream, spawn, time::sleep, System};
+use crate::util::join_all;
 
 use super::accept::{AcceptLoop, AcceptNotify, Command};
 use super::config::{ConfiguredService, ServiceConfig};
@@ -22,6 +16,8 @@ use super::signals::{Signal, Signals};
 use super::socket::Listener;
 use super::worker::{self, Worker, WorkerAvailability, WorkerClient};
 use super::{Server, ServerCommand, Token};
+
+const STOP_DELAY: Duration = Duration::from_millis(300);
 
 /// Server builder
 pub struct ServerBuilder {
@@ -49,7 +45,7 @@ impl Default for ServerBuilder {
 impl ServerBuilder {
     /// Create new Server builder instance
     pub fn new() -> ServerBuilder {
-        let (tx, rx) = unbounded();
+        let (tx, rx) = unbounded_channel();
         let server = Server::new(tx);
 
         ServerBuilder {
@@ -369,45 +365,33 @@ impl ServerBuilder {
 
                 // stop workers
                 if !self.workers.is_empty() && graceful {
-                    spawn(
-                        self.workers
-                            .iter()
-                            .map(move |worker| worker.1.stop(graceful))
-                            .collect::<FuturesUnordered<_>>()
-                            .collect::<Vec<_>>()
-                            .then(move |_| {
-                                if let Some(tx) = completion {
-                                    let _ = tx.send(());
-                                }
-                                for tx in notify {
-                                    let _ = tx.send(());
-                                }
-                                if exit {
-                                    spawn(
-                                        async {
-                                            sleep_until(
-                                                Instant::now()
-                                                    + Duration::from_millis(300),
-                                            )
-                                            .await;
-                                            System::current().stop();
-                                        }
-                                        .boxed(),
-                                    );
-                                }
-                                ready(())
-                            }),
-                    );
+                    let futs: Vec<_> = self
+                        .workers
+                        .iter()
+                        .map(move |worker| worker.1.stop(graceful))
+                        .collect();
+
+                    spawn(async move {
+                        let _ = join_all(futs).await;
+
+                        if let Some(tx) = completion {
+                            let _ = tx.send(());
+                        }
+                        for tx in notify {
+                            let _ = tx.send(());
+                        }
+                        if exit {
+                            sleep(STOP_DELAY).await;
+                            System::current().stop();
+                        }
+                    });
                 } else {
                     // we need to stop system if server was spawned
                     if self.exit {
-                        spawn(
-                            sleep_until(Instant::now() + Duration::from_millis(300))
-                                .then(|_| {
-                                    System::current().stop();
-                                    ready(())
-                                }),
-                        );
+                        spawn(async {
+                            sleep(STOP_DELAY).await;
+                            System::current().stop();
+                        });
                     }
                     if let Some(tx) = completion {
                         let _ = tx.send(());
@@ -455,11 +439,10 @@ impl Future for ServerBuilder {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
-            match ready!(Pin::new(&mut self.cmd).poll_next(cx)) {
-                Some(it) => self.as_mut().get_mut().handle_cmd(it),
-                None => {
-                    return Poll::Pending;
-                }
+            match Pin::new(&mut self.cmd).poll_recv(cx) {
+                Poll::Ready(Some(it)) => self.as_mut().get_mut().handle_cmd(it),
+                Poll::Ready(None) => return Poll::Pending,
+                Poll::Pending => return Poll::Pending,
             }
         }
     }
@@ -488,7 +471,7 @@ pub(super) fn bind_addr<S: net::ToSocketAddrs>(
         } else {
             Err(io::Error::new(
                 io::ErrorKind::Other,
-                "Can not bind to address.",
+                "Cannot bind to address.",
             ))
         }
     } else {
@@ -501,8 +484,8 @@ pub(crate) fn create_tcp_listener(
     backlog: i32,
 ) -> io::Result<net::TcpListener> {
     let builder = match addr {
-        net::SocketAddr::V4(_) => Socket::new(Domain::ipv4(), Type::stream(), None)?,
-        net::SocketAddr::V6(_) => Socket::new(Domain::ipv6(), Type::stream(), None)?,
+        net::SocketAddr::V4(_) => Socket::new(Domain::IPV4, Type::STREAM, None)?,
+        net::SocketAddr::V6(_) => Socket::new(Domain::IPV6, Type::STREAM, None)?,
     };
 
     // On Windows, this allows rebinding sockets which are actively in use,
@@ -513,7 +496,7 @@ pub(crate) fn create_tcp_listener(
 
     builder.bind(&SockAddr::from(addr))?;
     builder.listen(backlog)?;
-    Ok(builder.into_tcp_listener())
+    Ok(net::TcpListener::from(builder))
 }
 
 #[cfg(test)]
@@ -525,7 +508,6 @@ mod tests {
     #[cfg(unix)]
     #[crate::rt_test]
     async fn test_signals() {
-        use futures::future::ok;
         use std::sync::mpsc;
         use std::{net, thread, time};
 
@@ -537,7 +519,9 @@ mod tests {
                     crate::server::build()
                         .workers(1)
                         .disable_signals()
-                        .bind("test", addr, move || fn_service(|_| ok::<_, ()>(())))
+                        .bind("test", addr, move || {
+                            fn_service(|_| async { Ok::<_, ()>(()) })
+                        })
                         .unwrap()
                         .start()
                 });

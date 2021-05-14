@@ -1,13 +1,11 @@
 use std::task::{Context, Poll};
-use std::{collections::VecDeque, io, net::SocketAddr, pin::Pin};
-
-use either::Either;
-use futures::future::{ok, Future, FutureExt, LocalBoxFuture, Ready};
+use std::{collections::VecDeque, future::Future, io, net::SocketAddr, pin::Pin};
 
 use crate::rt::net::TcpStream;
 use crate::service::{Service, ServiceFactory};
+use crate::util::{Either, Ready};
 
-use super::{Address, Connect, ConnectError, DnsResolver, Resolver};
+use super::{Address, Connect, ConnectError, Resolver};
 
 pub struct Connector<T> {
     resolver: Resolver<T>,
@@ -15,9 +13,9 @@ pub struct Connector<T> {
 
 impl<T> Connector<T> {
     /// Construct new connect service with custom dns resolver
-    pub fn new(resolver: DnsResolver) -> Self {
+    pub fn new() -> Self {
         Connector {
-            resolver: Resolver::new(resolver),
+            resolver: Resolver::new(),
         }
     }
 }
@@ -58,11 +56,11 @@ impl<T: Address> ServiceFactory for Connector<T> {
     type Config = ();
     type Service = Connector<T>;
     type InitError = ();
-    type Future = Ready<Result<Self::Service, Self::InitError>>;
+    type Future = Ready<Self::Service, Self::InitError>;
 
     #[inline]
     fn new_service(&self, _: ()) -> Self::Future {
-        ok(self.clone())
+        Ready::Ok(self.clone())
     }
 }
 
@@ -140,7 +138,7 @@ struct TcpConnectorResponse<T> {
     req: Option<T>,
     port: u16,
     addrs: Option<VecDeque<SocketAddr>>,
-    stream: Option<LocalBoxFuture<'static, Result<TcpStream, io::Error>>>,
+    stream: Option<Pin<Box<dyn Future<Output = Result<TcpStream, io::Error>>>>>,
 }
 
 impl<T: Address> TcpConnectorResponse<T> {
@@ -160,7 +158,7 @@ impl<T: Address> TcpConnectorResponse<T> {
                 req: Some(req),
                 port,
                 addrs: None,
-                stream: Some(TcpStream::connect(addr).boxed_local()),
+                stream: Some(Box::pin(TcpStream::connect(addr))),
             },
             Either::Right(addrs) => TcpConnectorResponse {
                 req: Some(req),
@@ -173,7 +171,7 @@ impl<T: Address> TcpConnectorResponse<T> {
 
     fn can_continue(&self, err: &io::Error) -> bool {
         trace!(
-            "TCP connector - failed to connect to connecting to {:?} port: {} err: {:?}",
+            "TCP connector - failed to connect to {:?} port: {} err: {:?}",
             self.req.as_ref().unwrap().host(),
             self.port,
             err
@@ -217,7 +215,7 @@ impl<T: Address> Future for TcpConnectorResponse<T> {
 
             // try to connect
             let addr = this.addrs.as_mut().unwrap().pop_front().unwrap();
-            this.stream = Some(TcpStream::connect(addr).boxed());
+            this.stream = Some(Box::pin(TcpStream::connect(addr)));
         }
     }
 }

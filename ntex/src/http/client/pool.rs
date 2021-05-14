@@ -1,8 +1,7 @@
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
-use std::{cell::RefCell, collections::VecDeque, pin::Pin, rc::Rc};
+use std::{cell::RefCell, collections::VecDeque, future::Future, pin::Pin, rc::Rc};
 
-use futures::future::{poll_fn, Future, FutureExt, LocalBoxFuture};
 use h2::client::{handshake, Connection, SendRequest};
 use http::uri::Authority;
 
@@ -12,7 +11,7 @@ use crate::http::Protocol;
 use crate::rt::{spawn, time::sleep, time::Sleep};
 use crate::service::Service;
 use crate::task::LocalWaker;
-use crate::util::{Bytes, HashMap};
+use crate::util::{poll_fn, Bytes, HashMap};
 
 use super::connection::{ConnectionType, IoConnection};
 use super::error::ConnectError;
@@ -102,7 +101,7 @@ where
     type Request = Connect;
     type Response = IoConnection<Io>;
     type Error = ConnectError;
-    type Future = LocalBoxFuture<'static, Result<IoConnection<Io>, ConnectError>>;
+    type Future = Pin<Box<dyn Future<Output = Result<IoConnection<Io>, ConnectError>>>>;
 
     #[inline]
     fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -120,7 +119,7 @@ where
         let connector = self.0.clone();
         let inner = self.1.clone();
 
-        let fut = async move {
+        Box::pin(async move {
             let key = if let Some(authority) = req.uri.authority() {
                 authority.clone().into()
             } else {
@@ -162,9 +161,7 @@ where
                     }
                 }
             }
-        };
-
-        fut.boxed_local()
+        })
     }
 }
 
@@ -441,9 +438,15 @@ where
 {
     fut: F,
     h2: Option<
-        LocalBoxFuture<
-            'static,
-            Result<(SendRequest<Bytes>, Connection<Io, Bytes>), h2::Error>,
+        Pin<
+            Box<
+                dyn Future<
+                    Output = Result<
+                        (SendRequest<Bytes>, Connection<Io, Bytes>),
+                        h2::Error,
+                    >,
+                >,
+            >,
         >,
     >,
     tx: Option<Waiter<Io>>,
@@ -492,7 +495,9 @@ where
                         // waiter is gone, return connection to pool
                         conn.release()
                     }
-                    spawn(connection.map(|_| ()));
+                    spawn(async move {
+                        let _ = connection.await;
+                    });
                     Poll::Ready(())
                 }
                 Poll::Pending => Poll::Pending,
@@ -530,7 +535,7 @@ where
                     Poll::Ready(())
                 } else {
                     // init http2 handshake
-                    this.h2 = Some(handshake(io).boxed_local());
+                    this.h2 = Some(Box::pin(handshake(io)));
                     self.poll(cx)
                 }
             }
@@ -603,18 +608,14 @@ impl<T> Drop for Acquired<T> {
 
 #[cfg(test)]
 mod tests {
-    use futures::future::{lazy, ok, Future};
-    use std::cell::RefCell;
-    use std::convert::TryFrom;
-    use std::rc::Rc;
-    use std::time::Duration;
+    use std::{cell::RefCell, convert::TryFrom, rc::Rc, time::Duration};
 
     use super::*;
-    use crate::http::client::Connection;
-    use crate::http::Uri;
     use crate::rt::time::sleep;
-    use crate::service::fn_service;
-    use crate::testing::Io;
+    use crate::{
+        http::client::Connection, http::Uri, service::fn_service, testing::Io,
+        util::lazy,
+    };
 
     #[crate::rt_test]
     async fn test_basics() {
@@ -625,7 +626,7 @@ mod tests {
             fn_service(move |req| {
                 let (client, server) = Io::create();
                 store2.borrow_mut().push((req, server));
-                ok((client, Protocol::Http1))
+                Box::pin(async move { Ok((client, Protocol::Http1)) })
             }),
             Duration::from_secs(10),
             Duration::from_secs(10),

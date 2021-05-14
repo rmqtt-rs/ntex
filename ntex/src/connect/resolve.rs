@@ -1,34 +1,22 @@
-use std::{
-    fmt, marker::PhantomData, net::SocketAddr, pin::Pin, rc::Rc, task::Context,
-    task::Poll,
-};
+use std::{fmt, future::Future, io, marker, net, pin::Pin, task::Context, task::Poll};
 
-use futures::future::{ok, Either, Future, Ready};
-
-use super::{default_resolver, Address, Connect, ConnectError, DnsResolver};
+use super::{Address, Connect, ConnectError};
 use crate::service::{Service, ServiceFactory};
+use crate::util::{Either, Ready};
 
 /// DNS Resolver Service
-pub struct Resolver<T> {
-    resolver: Rc<DnsResolver>,
-    _t: PhantomData<T>,
-}
+pub struct Resolver<T>(marker::PhantomData<T>);
 
 impl<T> fmt::Debug for Resolver<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Resolver")
-            .field("resolver", &self.resolver)
-            .finish()
+        f.debug_struct("Resolver").finish()
     }
 }
 
 impl<T> Resolver<T> {
     /// Create new resolver instance with custom configuration and options.
-    pub fn new(resolver: DnsResolver) -> Self {
-        Resolver {
-            resolver: Rc::new(resolver),
-            _t: PhantomData,
-        }
+    pub fn new() -> Self {
+        Resolver(marker::PhantomData)
     }
 }
 
@@ -39,26 +27,31 @@ impl<T: Address> Resolver<T> {
         mut req: Connect<T>,
     ) -> impl Future<Output = Result<Connect<T>, ConnectError>> {
         if req.addr.is_some() || req.req.addr().is_some() {
-            Either::Right(ok(req))
+            Either::Right(Ready::Ok(req))
         } else if let Ok(ip) = req.host().parse() {
-            req.addr = Some(either::Either::Left(SocketAddr::new(ip, req.port())));
-            Either::Right(ok(req))
+            req.addr = Some(Either::Left(net::SocketAddr::new(ip, req.port())));
+            Either::Right(Ready::Ok(req))
         } else {
             trace!("DNS resolver: resolving host {:?}", req.host());
-            let resolver = self.resolver.clone();
 
             Either::Left(async move {
-                let fut = if let Some(host) = req.host().splitn(2, ':').next() {
-                    resolver.lookup_ip(host)
+                let host = if req.host().contains(':') {
+                    req.host().to_string()
                 } else {
-                    resolver.lookup_ip(req.host())
+                    format!("{}:{}", req.host(), req.port())
                 };
 
+                let fut = crate::rt::task::spawn_blocking(move || {
+                    net::ToSocketAddrs::to_socket_addrs(&host)
+                });
+
                 match fut.await {
-                    Ok(ips) => {
+                    Ok(Ok(ips)) => {
                         let port = req.port();
-                        let req = req
-                            .set_addrs(ips.iter().map(|ip| SocketAddr::new(ip, port)));
+                        let req = req.set_addrs(ips.map(|mut ip| {
+                            ip.set_port(port);
+                            ip
+                        }));
 
                         trace!(
                             "DNS resolver: host {:?} resolved to {:?}",
@@ -72,13 +65,24 @@ impl<T: Address> Resolver<T> {
                             Ok(req)
                         }
                     }
+                    Ok(Err(e)) => {
+                        trace!(
+                            "DNS resolver: failed to resolve host {:?} err: {}",
+                            req.host(),
+                            e
+                        );
+                        Err(ConnectError::Resolver(e))
+                    }
                     Err(e) => {
                         trace!(
                             "DNS resolver: failed to resolve host {:?} err: {}",
                             req.host(),
                             e
                         );
-                        Err(e.into())
+                        Err(ConnectError::Resolver(io::Error::new(
+                            io::ErrorKind::Other,
+                            e,
+                        )))
                     }
                 }
             })
@@ -88,19 +92,13 @@ impl<T: Address> Resolver<T> {
 
 impl<T> Default for Resolver<T> {
     fn default() -> Resolver<T> {
-        Resolver {
-            resolver: Rc::new(default_resolver()),
-            _t: PhantomData,
-        }
+        Resolver(marker::PhantomData)
     }
 }
 
 impl<T> Clone for Resolver<T> {
     fn clone(&self) -> Self {
-        Resolver {
-            resolver: self.resolver.clone(),
-            _t: PhantomData,
-        }
+        Resolver(marker::PhantomData)
     }
 }
 
@@ -111,10 +109,10 @@ impl<T: Address> ServiceFactory for Resolver<T> {
     type Config = ();
     type Service = Resolver<T>;
     type InitError = ();
-    type Future = Ready<Result<Self::Service, Self::InitError>>;
+    type Future = Ready<Self::Service, Self::InitError>;
 
     fn new_service(&self, _: ()) -> Self::Future {
-        ok(self.clone())
+        Ready::Ok(self.clone())
     }
 }
 
@@ -137,13 +135,12 @@ impl<T: Address> Service for Resolver<T> {
 
 #[cfg(test)]
 mod tests {
-    use futures::future::lazy;
-
     use super::*;
+    use crate::util::lazy;
 
     #[crate::rt_test]
     async fn resolver() {
-        let resolver = Resolver::new(DnsResolver::tokio_from_system_conf().unwrap());
+        let resolver = Resolver::new();
         assert!(format!("{:?}", resolver).contains("Resolver"));
         let srv = resolver.new_service(()).await.unwrap();
         assert!(lazy(|cx| srv.poll_ready(cx)).await.is_ready());
@@ -154,7 +151,7 @@ mod tests {
         let res = srv.call(Connect::new("---11213")).await;
         assert!(res.is_err());
 
-        let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let addr: net::SocketAddr = "127.0.0.1:8080".parse().unwrap();
         let res = srv
             .call(Connect::new("www.rust-lang.org").set_addrs(vec![addr]))
             .await

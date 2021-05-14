@@ -1,7 +1,5 @@
 //! Communication primitives
 
 mod cell;
-pub mod condition;
 pub mod mpsc;
-pub mod oneshot;
-pub mod pool;
+pub use ntex_util::channel::*;

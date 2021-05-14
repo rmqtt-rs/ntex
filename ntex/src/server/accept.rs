@@ -7,11 +7,13 @@ use crate::rt::time::{sleep_until, Instant};
 use crate::rt::System;
 
 use super::socket::{Listener, SocketAddr};
-use super::worker::{Conn, WorkerClient};
+use super::worker::{Connection, WorkerClient};
 use super::{Server, Token};
 
 const DELTA: usize = 100;
 const NOTIFY: mio::Token = mio::Token(0);
+const ERR_TIMEOUT: Duration = Duration::from_millis(500);
+const ERR_SLEEP_TIMEOUT: Duration = Duration::from_millis(525);
 
 #[derive(Debug)]
 pub(super) enum Command {
@@ -53,13 +55,13 @@ impl AcceptLoop {
     pub(super) fn new(srv: Server) -> AcceptLoop {
         // Create a poll instance
         let poll = mio::Poll::new()
-            .map_err(|e| panic!("Can not create mio::Poll {}", e))
+            .map_err(|e| panic!("Cannot create mio::Poll {}", e))
             .unwrap();
 
         let (tx, rx) = sync_mpsc::channel();
         let waker = Arc::new(
             mio::Waker::new(poll.registry(), NOTIFY)
-                .map_err(|e| panic!("Can not create mio::Waker {}", e))
+                .map_err(|e| panic!("Cannot create mio::Waker {}", e))
                 .unwrap(),
         );
         let notify = AcceptNotify::new(waker, tx);
@@ -157,7 +159,7 @@ impl Accept {
                 mio::Token(token + DELTA),
                 mio::Interest::READABLE,
             ) {
-                panic!("Can not register io: {}", err);
+                panic!("Cannot register io: {}", err);
             }
 
             entry.insert(ServerSocketInfo {
@@ -223,17 +225,20 @@ impl Accept {
         for (token, info) in self.sockets.iter_mut() {
             if let Some(inst) = info.timeout.take() {
                 if now > inst {
-                    if let Err(err) = self.poll.registry().register(
-                        &mut info.sock,
-                        mio::Token(token + DELTA),
-                        mio::Interest::READABLE,
-                    ) {
-                        error!("Can not register server socket {}", err);
-                    } else {
-                        info!("Resume accepting connections on {}", info.addr);
+                    if !self.backpressure {
+                        if let Err(err) = self.poll.registry().register(
+                            &mut info.sock,
+                            mio::Token(token + DELTA),
+                            mio::Interest::READABLE,
+                        ) {
+                            error!("Cannot register server socket {}", err);
+                        } else {
+                            info!("Resume accepting connections on {}", info.addr);
+                        }
                     }
                 } else {
                     info.timeout = Some(inst);
+                    break;
                 }
             }
         }
@@ -248,7 +253,7 @@ impl Accept {
                             if let Err(err) =
                                 self.poll.registry().deregister(&mut info.sock)
                             {
-                                error!("Can not deregister server socket {}", err);
+                                error!("Cannot deregister server socket {}", err);
                             } else {
                                 info!("Paused accepting connections on {}", info.addr);
                             }
@@ -261,7 +266,7 @@ impl Accept {
                                 mio::Token(token + DELTA),
                                 mio::Interest::READABLE,
                             ) {
-                                error!("Can not resume socket accept process: {}", err);
+                                error!("Cannot resume socket accept process: {}", err);
                             } else {
                                 info!(
                                     "Accepting connections on {} has been resumed",
@@ -316,7 +321,7 @@ impl Accept {
                         mio::Token(token + DELTA),
                         mio::Interest::READABLE,
                     ) {
-                        error!("Can not resume socket accept process: {}", err);
+                        error!("Cannot resume socket accept process: {}", err);
                     } else {
                         info!("Accepting connections on {} has been resumed", info.addr);
                     }
@@ -325,7 +330,8 @@ impl Accept {
         } else if on {
             self.backpressure = true;
             for (_, info) in self.sockets.iter_mut() {
-                if info.timeout.is_none() {
+                // disable err timeout
+                if let None = info.timeout.take() {
                     trace!("Enabling backpressure for {}", info.addr);
                     let _ = self.poll.registry().deregister(&mut info.sock);
                 }
@@ -333,7 +339,7 @@ impl Accept {
         }
     }
 
-    fn accept_one(&mut self, mut msg: Conn) {
+    fn accept_one(&mut self, mut msg: Connection) {
         trace!("Accepting connection: {:?}", msg.io);
 
         if self.backpressure {
@@ -395,10 +401,9 @@ impl Accept {
         loop {
             let msg = if let Some(info) = self.sockets.get_mut(token) {
                 match info.sock.accept() {
-                    Ok(Some((io, addr))) => Conn {
+                    Ok(Some(io)) => Connection {
                         io,
                         token: info.token,
-                        peer: Some(addr),
                     },
                     Ok(None) => return,
                     Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => return,
@@ -407,16 +412,15 @@ impl Accept {
                         error!("Error accepting connection: {}", e);
                         if let Err(err) = self.poll.registry().deregister(&mut info.sock)
                         {
-                            error!("Can not deregister server socket {}", err);
+                            error!("Cannot deregister server socket {}", err);
                         }
 
                         // sleep after error
-                        info.timeout = Some(Instant::now() + Duration::from_millis(500));
+                        info.timeout = Some(Instant::now() + ERR_TIMEOUT);
 
                         let notify = self.notify.clone();
                         System::current().arbiter().spawn(Box::pin(async move {
-                            sleep_until(Instant::now() + Duration::from_millis(510))
-                                .await;
+                            sleep_until(Instant::now() + ERR_SLEEP_TIMEOUT).await;
                             notify.send(Command::Timer);
                         }));
                         return;

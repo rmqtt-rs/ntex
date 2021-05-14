@@ -1,8 +1,5 @@
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-
 use slab::Slab;
+use std::{future::Future, pin::Pin, task::Context, task::Poll};
 
 use super::cell::Cell;
 use crate::task::LocalWaker;
@@ -71,11 +68,6 @@ impl Waiter {
         }
         Poll::Pending
     }
-
-    #[doc(hidden)]
-    pub fn poll_waiter(&self, cx: &mut Context<'_>) -> Poll<()> {
-        self.poll_ready(cx)
-    }
 }
 
 impl Clone for Waiter {
@@ -92,7 +84,7 @@ impl Future for Waiter {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.get_mut().poll_waiter(cx)
+        self.get_mut().poll_ready(cx)
     }
 }
 
@@ -105,9 +97,9 @@ impl Drop for Waiter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::future::lazy;
+    use crate::future::lazy;
 
-    #[crate::rt_test]
+    #[ntex::test]
     #[allow(clippy::unit_cmp)]
     async fn test_condition() {
         let cond = Condition::new();
@@ -135,21 +127,20 @@ mod tests {
         assert_eq!(waiter2.await, ());
     }
 
-    #[crate::rt_test]
+    #[ntex::test]
     async fn test_condition_poll() {
         let cond = Condition::new();
         let waiter = cond.wait();
-        assert_eq!(lazy(|cx| waiter.poll_waiter(cx)).await, Poll::Pending);
+        assert_eq!(lazy(|cx| waiter.poll_ready(cx)).await, Poll::Pending);
         cond.notify();
-        assert_eq!(lazy(|cx| waiter.poll_waiter(cx)).await, Poll::Ready(()));
+        assert_eq!(lazy(|cx| waiter.poll_ready(cx)).await, Poll::Ready(()));
 
-        let waiter = cond.wait();
-        assert_eq!(lazy(|cx| waiter.poll_waiter(cx)).await, Poll::Pending);
         let waiter2 = waiter.clone();
-        assert_eq!(lazy(|cx| waiter2.poll_waiter(cx)).await, Poll::Pending);
+        assert_eq!(lazy(|cx| waiter.poll_ready(cx)).await, Poll::Pending);
+        assert_eq!(lazy(|cx| waiter2.poll_ready(cx)).await, Poll::Pending);
 
         drop(cond);
-        assert_eq!(lazy(|cx| waiter.poll_waiter(cx)).await, Poll::Ready(()));
-        assert_eq!(lazy(|cx| waiter2.poll_waiter(cx)).await, Poll::Ready(()));
+        assert_eq!(lazy(|cx| waiter.poll_ready(cx)).await, Poll::Ready(()));
+        assert_eq!(lazy(|cx| waiter2.poll_ready(cx)).await, Poll::Ready(()));
     }
 }

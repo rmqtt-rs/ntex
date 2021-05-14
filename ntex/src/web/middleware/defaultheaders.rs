@@ -1,14 +1,11 @@
 //! Middleware for setting default response headers
-use std::convert::TryFrom;
-use std::marker::PhantomData;
-use std::rc::Rc;
 use std::task::{Context, Poll};
-
-use futures::future::{ok, FutureExt, LocalBoxFuture, Ready};
+use std::{convert::TryFrom, future::Future, marker::PhantomData, pin::Pin, rc::Rc};
 
 use crate::http::error::HttpError;
 use crate::http::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use crate::service::{Service, Transform};
+use crate::util::Ready;
 use crate::web::dev::{WebRequest, WebResponse};
 
 /// `Middleware` for setting default response headers.
@@ -74,9 +71,9 @@ impl DefaultHeaders {
                         .headers
                         .append(key, value);
                 }
-                Err(_) => panic!("Can not create header value"),
+                Err(_) => panic!("Cannot create header value"),
             },
-            Err(_) => panic!("Can not create header name"),
+            Err(_) => panic!("Cannot create header name"),
         }
         self
     }
@@ -100,10 +97,10 @@ where
     type Error = S::Error;
     type InitError = ();
     type Transform = DefaultHeadersMiddleware<S, E>;
-    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+    type Future = Ready<Self::Transform, Self::InitError>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ok(DefaultHeadersMiddleware {
+        Ready::Ok(DefaultHeadersMiddleware {
             service,
             inner: self.inner.clone(),
             _t: PhantomData,
@@ -125,7 +122,7 @@ where
     type Request = WebRequest<E>;
     type Response = WebResponse;
     type Error = S::Error;
-    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
     #[inline]
     fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -141,7 +138,7 @@ where
         let inner = self.inner.clone();
         let fut = self.service.call(req);
 
-        async move {
+        Box::pin(async move {
             let mut res = fut.await?;
 
             // set response headers
@@ -158,18 +155,16 @@ where
                 );
             }
             Ok(res)
-        }
-        .boxed_local()
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use futures::future::{lazy, ok};
-
     use super::*;
     use crate::http::header::CONTENT_TYPE;
     use crate::service::IntoService;
+    use crate::util::lazy;
     use crate::web::request::WebRequest;
     use crate::web::test::{ok_service, TestRequest};
     use crate::web::{DefaultError, Error, HttpResponse};
@@ -191,8 +186,8 @@ mod tests {
 
         let req = TestRequest::default().to_srv_request();
         let srv =
-            |req: WebRequest<DefaultError>| {
-                ok::<_, Error>(req.into_response(
+            |req: WebRequest<DefaultError>| async move {
+                Ok::<_, Error>(req.into_response(
                     HttpResponse::Ok().header(CONTENT_TYPE, "0002").finish(),
                 ))
             };
@@ -207,8 +202,8 @@ mod tests {
 
     #[crate::rt_test]
     async fn test_content_type() {
-        let srv = |req: WebRequest<DefaultError>| {
-            ok::<_, Error>(req.into_response(HttpResponse::Ok().finish()))
+        let srv = |req: WebRequest<DefaultError>| async move {
+            Ok::<_, Error>(req.into_response(HttpResponse::Ok().finish()))
         };
         let mw = DefaultHeaders::new()
             .content_type()

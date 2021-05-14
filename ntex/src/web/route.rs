@@ -1,11 +1,6 @@
-use std::mem;
-use std::rc::Rc;
-use std::task::{Context, Poll};
+use std::{future::Future, mem, pin::Pin, rc::Rc, task::Context, task::Poll};
 
-use futures::future::{ok, ready, LocalBoxFuture, Ready};
-
-use crate::http::Method;
-use crate::{Service, ServiceFactory};
+use crate::{http::Method, util::Ready, Service, ServiceFactory};
 
 use super::error::ErrorRenderer;
 use super::error_default::DefaultError;
@@ -31,7 +26,9 @@ impl<Err: ErrorRenderer> Route<Err> {
     /// Create new route which matches any request.
     pub fn new() -> Route<Err> {
         Route {
-            handler: Box::new(HandlerWrapper::new(|| ready(HttpResponse::NotFound()))),
+            handler: Box::new(HandlerWrapper::new(|| async {
+                HttpResponse::NotFound()
+            })),
             methods: Vec::new(),
             guards: Rc::new(Vec::new()),
         }
@@ -63,10 +60,10 @@ impl<Err: ErrorRenderer> ServiceFactory for Route<Err> {
     type Error = Err::Container;
     type InitError = ();
     type Service = RouteService<Err>;
-    type Future = Ready<Result<RouteService<Err>, ()>>;
+    type Future = Ready<RouteService<Err>, ()>;
 
     fn new_service(&self, _: ()) -> Self::Future {
-        ok(self.service())
+        Ok(self.service()).into()
     }
 }
 
@@ -95,7 +92,7 @@ impl<Err: ErrorRenderer> Service for RouteService<Err> {
     type Request = WebRequest<Err>;
     type Response = WebResponse;
     type Error = Err::Container;
-    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
     #[inline]
     fn poll_ready(&self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -149,9 +146,8 @@ impl<Err: ErrorRenderer> Route<Err> {
     ///
     /// ```rust
     /// use ntex::web;
-    /// use serde_derive::Deserialize;
     ///
-    /// #[derive(Deserialize)]
+    /// #[derive(serde::Deserialize)]
     /// struct Info {
     ///     username: String,
     /// }
@@ -173,10 +169,9 @@ impl<Err: ErrorRenderer> Route<Err> {
     ///
     /// ```rust
     /// # use std::collections::HashMap;
-    /// # use serde_derive::Deserialize;
     /// use ntex::web;
     ///
-    /// #[derive(Deserialize)]
+    /// #[derive(serde::Deserialize)]
     /// struct Info {
     ///     username: String,
     /// }
@@ -282,14 +277,13 @@ mod tests {
     use std::time::Duration;
 
     use bytes::Bytes;
-    use serde_derive::Serialize;
 
     use crate::http::{Method, StatusCode};
     use crate::rt::time::sleep;
     use crate::web::test::{call_service, init_service, read_body, TestRequest};
     use crate::web::{self, error, App, DefaultError, HttpResponse};
 
-    #[derive(Serialize, PartialEq, Debug)]
+    #[derive(serde::Serialize, PartialEq, Debug)]
     struct MyObject {
         name: String,
     }

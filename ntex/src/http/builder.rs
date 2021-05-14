@@ -1,8 +1,8 @@
-use std::{error::Error, fmt, marker::PhantomData, rc::Rc};
+use std::{cell::RefCell, error::Error, fmt, marker::PhantomData, rc::Rc};
 
 use crate::framed::State;
 use crate::http::body::MessageBody;
-use crate::http::config::{KeepAlive, ServiceConfig};
+use crate::http::config::{KeepAlive, OnRequest, ServiceConfig};
 use crate::http::error::ResponseError;
 use crate::http::h1::{Codec, ExpectHandler, H1Service, UpgradeHandler};
 use crate::http::h2::H2Service;
@@ -10,7 +10,7 @@ use crate::http::helpers::{Data, DataFactory};
 use crate::http::request::Request;
 use crate::http::response::Response;
 use crate::http::service::HttpService;
-use crate::service::{IntoServiceFactory, Service, ServiceFactory};
+use crate::service::{boxed, IntoService, IntoServiceFactory, Service, ServiceFactory};
 
 /// A http service builder
 ///
@@ -27,6 +27,7 @@ pub struct HttpServiceBuilder<T, S, X = ExpectHandler, U = UpgradeHandler<T>> {
     expect: X,
     upgrade: Option<U>,
     on_connect: Option<Rc<dyn Fn(&T) -> Box<dyn DataFactory>>>,
+    on_request: Option<OnRequest<T>>,
     _t: PhantomData<(T, S)>,
 }
 
@@ -44,6 +45,7 @@ impl<T, S> HttpServiceBuilder<T, S, ExpectHandler, UpgradeHandler<T>> {
             expect: ExpectHandler,
             upgrade: None,
             on_connect: None,
+            on_request: None,
             _t: PhantomData,
         }
     }
@@ -89,7 +91,7 @@ where
         self
     }
 
-    /// Set server connection disconnect timeout in milliseconds.
+    /// Set server connection disconnect timeout in seconds.
     ///
     /// Defines a timeout for disconnect connection. If a disconnect procedure does not complete
     /// within this time, the connection get dropped.
@@ -114,30 +116,18 @@ where
     }
 
     #[inline]
-    /// Set read buffer high water mark size
+    /// Set read/write buffer params
     ///
-    /// By default read hw is 8kb
-    pub fn read_high_watermark(mut self, hw: u16) -> Self {
-        self.read_hw = hw;
-        self
-    }
-
-    #[inline]
-    /// Set write buffer high watermark size
-    ///
-    /// By default write hw is 8kb
-    pub fn write_high_watermark(mut self, hw: u16) -> Self {
-        self.write_hw = hw;
-        self
-    }
-
-    #[inline]
-    /// Set buffer low watermark size
-    ///
-    /// Low watermark is the same for read and write buffers.
-    /// By default low watermark value is 1kb.
-    pub fn low_watermark(mut self, lw: u16) -> Self {
-        self.lw = lw;
+    /// By default read buffer is 8kb, write buffer is 8kb
+    pub fn buffer_params(
+        mut self,
+        max_read_buf_size: u16,
+        max_write_buf_size: u16,
+        min_buf_size: u16,
+    ) -> Self {
+        self.read_hw = max_read_buf_size;
+        self.write_hw = max_write_buf_size;
+        self.lw = min_buf_size;
         self
     }
 
@@ -163,6 +153,7 @@ where
             expect: expect.into_factory(),
             upgrade: self.upgrade,
             on_connect: self.on_connect,
+            on_request: self.on_request,
             lw: self.lw,
             read_hw: self.read_hw,
             write_hw: self.write_hw,
@@ -195,6 +186,7 @@ where
             expect: self.expect,
             upgrade: Some(upgrade.into_factory()),
             on_connect: self.on_connect,
+            on_request: self.on_request,
             lw: self.lw,
             read_hw: self.read_hw,
             write_hw: self.write_hw,
@@ -212,6 +204,22 @@ where
         I: Clone + 'static,
     {
         self.on_connect = Some(Rc::new(move |io| Box::new(Data(f(io)))));
+        self
+    }
+
+    /// Set req request callback.
+    ///
+    /// It get called once per request.
+    pub fn on_request<Filter, F>(mut self, f: F) -> Self
+    where
+        F: IntoService<Filter>,
+        Filter: Service<
+                Request = (Request, Rc<RefCell<T>>),
+                Response = Request,
+                Error = Response,
+            > + 'static,
+    {
+        self.on_request = Some(boxed::service(f.into_service()));
         self
     }
 
@@ -238,6 +246,7 @@ where
             .expect(self.expect)
             .upgrade(self.upgrade)
             .on_connect(self.on_connect)
+            .on_request(self.on_request)
     }
 
     /// Finish service configuration and create *http service* for HTTP/2 protocol.
@@ -286,5 +295,6 @@ where
             .expect(self.expect)
             .upgrade(self.upgrade)
             .on_connect(self.on_connect)
+            .on_request(self.on_request)
     }
 }
