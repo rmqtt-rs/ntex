@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 
 use bytes::{Buf, BufMut, BytesMut};
 use log::debug;
-use nanorand::{WyRand, RNG};
+use nanorand::{WyRand, Rng};
 
 use super::mask::apply_mask;
 use super::proto::{CloseCode, CloseReason, OpCode};

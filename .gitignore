@@ -4,7 +4,7 @@ guide/build/
 /gh-pages
 cobertura.xml
 .DS_Store
-
+.idea
 *.so
 *.out
 *.pid

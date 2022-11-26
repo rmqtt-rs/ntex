@@ -1,6 +1,6 @@
 [package]
 name = "ntex"
-version = "0.3.16"
+version = "0.3.17"
 authors = ["ntex contributors <team@ntex.rs>"]
 description = "Framework for composable network services"
 readme = "README.md"
@@ -63,7 +63,7 @@ log = "0.4"
 mime = "0.3"
 mio = { version = "0.7", features = ["os-poll", "tcp"]}
 num_cpus = "1.13"
-nanorand = { version = "0.5", default-features = false, features = ["std", "wyrand"] }
+nanorand = { version = "0.6.1", default-features = false, features = ["std", "wyrand"] }
 percent-encoding = "2.1"
 pin-project-lite = "0.2"
 regex = { version = "1.4.5", default-features = false, features = ["std"] }
