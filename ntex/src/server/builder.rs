@@ -24,6 +24,8 @@ pub struct ServerBuilder {
     threads: usize,
     token: Token,
     backlog: i32,
+    reuseaddr: Option<bool>,
+    reuseport: Option<bool>,
     workers: Vec<(usize, WorkerClient)>,
     services: Vec<Box<dyn InternalServiceFactory>>,
     sockets: Vec<(Token, String, Listener)>,
@@ -56,6 +58,8 @@ impl ServerBuilder {
             sockets: Vec::new(),
             accept: AcceptLoop::new(server.clone()),
             backlog: 2048,
+            reuseaddr: None,
+            reuseport: None,
             exit: false,
             shutdown_timeout: Duration::from_secs(30),
             no_signals: false,
@@ -86,6 +90,18 @@ impl ServerBuilder {
     /// This method should be called before `bind()` method call.
     pub fn backlog(mut self, num: i32) -> Self {
         self.backlog = num;
+        self
+    }
+
+    ///Set reuseaddr
+    pub fn reuseaddr(mut self, b: Option<bool>) -> Self {
+        self.reuseaddr = b;
+        self
+    }
+
+    ///Set reuseport
+    pub fn reuseport(mut self, b: Option<bool>) -> Self {
+        self.reuseport = b;
         self
     }
 
@@ -137,7 +153,7 @@ impl ServerBuilder {
     where
         F: Fn(&mut ServiceConfig) -> io::Result<()>,
     {
-        let mut cfg = ServiceConfig::new(self.threads, self.backlog);
+        let mut cfg = ServiceConfig::new(self.threads, self.backlog, self.reuseaddr, self.reuseport);
 
         f(&mut cfg)?;
 
@@ -166,7 +182,7 @@ impl ServerBuilder {
         F: StreamServiceFactory<TcpStream>,
         U: net::ToSocketAddrs,
     {
-        let sockets = bind_addr(addr, self.backlog)?;
+        let sockets = bind_addr(addr, self.backlog, self.reuseaddr, self.reuseport)?;
 
         for lst in sockets {
             let token = self.token.next();
@@ -451,12 +467,14 @@ impl Future for ServerBuilder {
 pub(super) fn bind_addr<S: net::ToSocketAddrs>(
     addr: S,
     backlog: i32,
+    reuseaddr: Option<bool>,
+    reuseport: Option<bool>,
 ) -> io::Result<Vec<net::TcpListener>> {
     let mut err = None;
     let mut succ = false;
     let mut sockets = Vec::new();
     for addr in addr.to_socket_addrs()? {
-        match create_tcp_listener(addr, backlog) {
+        match create_tcp_listener(addr, backlog, reuseaddr, reuseport) {
             Ok(lst) => {
                 succ = true;
                 sockets.push(lst);
@@ -482,6 +500,8 @@ pub(super) fn bind_addr<S: net::ToSocketAddrs>(
 pub(crate) fn create_tcp_listener(
     addr: net::SocketAddr,
     backlog: i32,
+    reuseaddr: Option<bool>,
+    reuseport: Option<bool>,
 ) -> io::Result<net::TcpListener> {
     let builder = match addr {
         net::SocketAddr::V4(_) => Socket::new(Domain::IPV4, Type::STREAM, None)?,
@@ -492,7 +512,14 @@ pub(crate) fn create_tcp_listener(
     // which allows “socket hijacking”, so we explicitly don't set it here.
     // https://docs.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse
     #[cfg(not(windows))]
-    builder.set_reuse_address(true)?;
+    if let Some(reuseaddr) = reuseaddr {
+        builder.set_reuse_address(reuseaddr)?;
+    }
+
+    #[cfg(not(windows))]
+    if let Some(reuseport) = reuseport {
+        builder.set_reuse_port(reuseport)?;
+    }
 
     builder.bind(&SockAddr::from(addr))?;
     builder.listen(backlog)?;
@@ -552,6 +579,6 @@ mod tests {
     #[test]
     fn test_bind_addr() {
         let addrs: Vec<net::SocketAddr> = Vec::new();
-        assert!(bind_addr(&addrs[..], 10).is_err());
+        assert!(bind_addr(&addrs[..], 10, Some(true), None).is_err());
     }
 }

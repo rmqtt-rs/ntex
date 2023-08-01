@@ -20,13 +20,17 @@ pub struct ServiceConfig {
     pub(super) apply: Option<Box<dyn ServiceRuntimeConfiguration + Send>>,
     pub(super) threads: usize,
     pub(super) backlog: i32,
+    pub(super) reuseaddr: Option<bool>,
+    pub(super) reuseport: Option<bool>,
 }
 
 impl ServiceConfig {
-    pub(super) fn new(threads: usize, backlog: i32) -> ServiceConfig {
+    pub(super) fn new(threads: usize, backlog: i32, reuseaddr: Option<bool>, reuseport: Option<bool>) -> ServiceConfig {
         ServiceConfig {
             threads,
             backlog,
+            reuseaddr,
+            reuseport,
             services: Vec::new(),
             apply: None,
         }
@@ -37,7 +41,7 @@ impl ServiceConfig {
     where
         U: net::ToSocketAddrs,
     {
-        let sockets = bind_addr(addr, self.backlog)?;
+        let sockets = bind_addr(addr, self.backlog, self.reuseaddr, self.reuseport)?;
 
         for lst in sockets {
             self.listen(name.as_ref(), lst);
