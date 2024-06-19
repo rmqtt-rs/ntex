@@ -42,7 +42,7 @@ pub fn test_server<F: StreamServiceFactory<TcpStream>>(factory: F) -> TestServer
 
     // run server in separate thread
     thread::spawn(move || {
-        let mut sys = System::new("ntex-test-server").expect("");
+        let mut sys = System::new("ntex-test-server");
         let tcp = net::TcpListener::bind("127.0.0.1:0").expect("");
         let local_addr = tcp.local_addr().expect("");
 
@@ -73,7 +73,7 @@ where
 
     // run server in separate thread
     thread::spawn(move || {
-        let mut sys = System::new("ntex-test-server").expect("");
+        let mut sys = System::new("ntex-test-server");
 
         sys.exec(|| {
             factory(Server::build())

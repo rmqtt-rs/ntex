@@ -213,7 +213,7 @@ pub fn server<F: StreamServiceFactory<TcpStream>>(factory: F) -> TestServer {
 
     // run server in separate thread
     thread::spawn(move || {
-        let mut sys = System::new("test-server").unwrap();
+        let mut sys = System::new("test-server");
         let tcp = net::TcpListener::bind("127.0.0.1:0").unwrap();
         let local_addr = tcp.local_addr().unwrap();
 
