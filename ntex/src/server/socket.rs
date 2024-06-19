@@ -50,7 +50,7 @@ impl fmt::Display for Listener {
         match *self {
             Listener::Tcp(ref lst) => {
                 if let Some(addr) = lst.local_addr().ok() {
-                    write!(f, "{}", addr)
+                    write!(f, "{}", addr.to_string())
                 } else {
                     write!(f, "")
                 }
@@ -58,7 +58,7 @@ impl fmt::Display for Listener {
             #[cfg(unix)]
             Listener::Uds(ref lst) => {
                 if let Some(addr) = lst.local_addr().ok() {
-                    write!(f, "{}", addr)
+                    write!(f, "{:?}", addr)
                 } else {
                     write!(f, "")
                 }
