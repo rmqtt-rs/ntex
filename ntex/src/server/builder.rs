@@ -153,7 +153,12 @@ impl ServerBuilder {
     where
         F: Fn(&mut ServiceConfig) -> io::Result<()>,
     {
-        let mut cfg = ServiceConfig::new(self.threads, self.backlog, self.reuseaddr, self.reuseport);
+        let mut cfg = ServiceConfig::new(
+            self.threads,
+            self.backlog,
+            self.reuseaddr,
+            self.reuseport,
+        );
 
         f(&mut cfg)?;
 
@@ -549,7 +554,7 @@ mod tests {
                         .bind("test", addr, move || {
                             fn_service(|_| async { Ok::<_, ()>(()) })
                         })
-                        .unwrap()
+                        .expect("")
                         .start()
                 });
                 let _ = tx.send((srv, addr));
@@ -564,7 +569,7 @@ mod tests {
         ] {
             let (tx, rx) = mpsc::channel();
             let h = start(tx);
-            let (srv, addr) = rx.recv().unwrap();
+            let (srv, addr) = rx.recv().expect("");
 
             crate::rt::time::sleep(time::Duration::from_millis(300)).await;
             assert!(net::TcpStream::connect(addr).is_ok());

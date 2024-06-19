@@ -277,13 +277,13 @@ mod tests {
         let addrs: Vec<_> = connect.addrs().collect();
         assert!(addrs.is_empty());
 
-        let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let addr: SocketAddr = "127.0.0.1:8080".parse().expect("");
         connect = connect.set_addrs(vec![addr]);
         let addrs: Vec<_> = connect.take_addrs().collect();
         assert_eq!(addrs.len(), 1);
         assert!(addrs.contains(&addr));
 
-        let addr2: SocketAddr = "127.0.0.1:8081".parse().unwrap();
+        let addr2: SocketAddr = "127.0.0.1:8081".parse().expect("");
         connect = connect.set_addrs(vec![addr, addr2]);
         let addrs: Vec<_> = connect.addrs().collect();
         assert_eq!(addrs.len(), 2);
@@ -301,7 +301,7 @@ mod tests {
         connect = connect.set_addrs(vec![addr]);
         assert_eq!(format!("{}", connect), "www.rust-lang.org:80");
 
-        let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let addr: SocketAddr = "127.0.0.1:8080".parse().expect("");
         let mut connect = Connect::new(addr);
         assert_eq!(connect.host(), "");
         assert_eq!(connect.port(), 0);

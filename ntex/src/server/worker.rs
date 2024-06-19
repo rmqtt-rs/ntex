@@ -415,7 +415,9 @@ impl Future for Worker {
             WorkerState::Shutdown(ref mut t1, ref mut t2, ref mut tx) => {
                 let num = num_connections();
                 if num == 0 {
-                    let _ = tx.take().unwrap().send(true);
+                    if let Some(tx) = tx.take() {
+                        let _ = tx.send(true);
+                    }
                     Arbiter::current().stop();
                     return Poll::Ready(());
                 }
@@ -424,7 +426,9 @@ impl Future for Worker {
                 match t2.as_mut().poll(cx) {
                     Poll::Pending => (),
                     Poll::Ready(_) => {
-                        let _ = tx.take().unwrap().send(false);
+                        if let Some(tx) = tx.take() {
+                            let _ = tx.send(false);
+                        }
                         self.shutdown(true);
                         Arbiter::current().stop();
                         return Poll::Ready(());
@@ -528,7 +532,7 @@ mod tests {
         type Future = Ready<Srv, ()>;
 
         fn new_service(&self, _: ()) -> Self::Future {
-            let mut cnt = self.counter.lock().unwrap();
+            let mut cnt = self.counter.lock().expect("");
             *cnt += 1;
             Ready::Ok(Srv {
                 st: self.st.clone(),
@@ -547,10 +551,10 @@ mod tests {
         type Future = Ready<(), ()>;
 
         fn poll_ready(&self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-            let st: St = { *self.st.lock().unwrap() };
+            let st: St = { *self.st.lock().expect("") };
             match st {
                 St::Fail => {
-                    *self.st.lock().unwrap() = St::Pending;
+                    *self.st.lock().expect("") = St::Pending;
                     Poll::Ready(Err(()))
                 }
                 St::Ready => Poll::Ready(Ok(())),
@@ -559,7 +563,7 @@ mod tests {
         }
 
         fn poll_shutdown(&self, _: &mut Context<'_>, _: bool) -> Poll<()> {
-            match *self.st.lock().unwrap() {
+            match *self.st.lock().expect("") {
                 St::Ready => Poll::Ready(()),
                 St::Fail | St::Pending => Poll::Pending,
             }
@@ -576,8 +580,8 @@ mod tests {
         let (_tx1, rx1) = unbounded_channel();
         let (tx2, rx2) = unbounded_channel();
         let (sync_tx, _sync_rx) = std::sync::mpsc::channel();
-        let poll = mio::Poll::new().unwrap();
-        let waker = Arc::new(mio::Waker::new(poll.registry(), mio::Token(1)).unwrap());
+        let poll = mio::Poll::new().expect("");
+        let waker = Arc::new(mio::Waker::new(poll.registry(), mio::Token(1)).expect(""));
         let avail =
             WorkerAvailability::new(AcceptNotify::new(waker.clone(), sync_tx.clone()));
 
@@ -596,14 +600,14 @@ mod tests {
                 "test".to_string(),
                 Token(0),
                 move || f.clone(),
-                "127.0.0.1:8080".parse().unwrap(),
+                "127.0.0.1:8080".parse().expect(""),
             )],
             avail.clone(),
             time::Duration::from_secs(5),
         )
         .await
-        .unwrap();
-        assert_eq!(*counter.lock().unwrap(), 1);
+        .expect("");
+        assert_eq!(*counter.lock().expect(""), 1);
 
         let _ = lazy(|cx| Pin::new(&mut worker).poll(cx)).await;
         assert!(!avail.available());
@@ -611,28 +615,28 @@ mod tests {
         let _ = lazy(|cx| Pin::new(&mut worker).poll(cx)).await;
         assert!(!avail.available());
 
-        *st.lock().unwrap() = St::Ready;
+        *st.lock().expect("") = St::Ready;
         let _ = lazy(|cx| Pin::new(&mut worker).poll(cx)).await;
         assert!(avail.available());
 
-        *st.lock().unwrap() = St::Pending;
+        *st.lock().expect("") = St::Pending;
         let _ = lazy(|cx| Pin::new(&mut worker).poll(cx)).await;
         assert!(!avail.available());
 
-        *st.lock().unwrap() = St::Ready;
+        *st.lock().expect("") = St::Ready;
         let _ = lazy(|cx| Pin::new(&mut worker).poll(cx)).await;
         assert!(avail.available());
 
         // restart
-        *st.lock().unwrap() = St::Fail;
+        *st.lock().expect("") = St::Fail;
         let _ = lazy(|cx| Pin::new(&mut worker).poll(cx)).await;
         assert!(!avail.available());
 
-        *st.lock().unwrap() = St::Fail;
+        *st.lock().expect("") = St::Fail;
         let _ = lazy(|cx| Pin::new(&mut worker).poll(cx)).await;
         assert!(!avail.available());
 
-        *st.lock().unwrap() = St::Ready;
+        *st.lock().expect("") = St::Ready;
         let _ = lazy(|cx| Pin::new(&mut worker).poll(cx)).await;
         assert!(avail.available());
 
@@ -644,7 +648,7 @@ mod tests {
             graceful: true,
             result: tx,
         })
-        .unwrap();
+        .expect("");
 
         let _ = lazy(|cx| Pin::new(&mut worker).poll(cx)).await;
         assert!(!avail.available());
@@ -668,18 +672,18 @@ mod tests {
                 "test".to_string(),
                 Token(0),
                 move || f.clone(),
-                "127.0.0.1:8080".parse().unwrap(),
+                "127.0.0.1:8080".parse().expect(""),
             )],
             avail.clone(),
             time::Duration::from_secs(5),
         )
         .await
-        .unwrap();
+        .expect("");
 
         // shutdown
         let _g = MAX_CONNS_COUNTER.with(|conns| conns.get());
 
-        *st.lock().unwrap() = St::Ready;
+        *st.lock().expect("") = St::Ready;
         let _ = lazy(|cx| Pin::new(&mut worker).poll(cx)).await;
         assert!(avail.available());
 
@@ -688,7 +692,7 @@ mod tests {
             graceful: false,
             result: tx,
         })
-        .unwrap();
+        .expect("");
 
         assert!(lazy(|cx| Pin::new(&mut worker).poll(cx)).await.is_ready());
         let _ = rx.await;

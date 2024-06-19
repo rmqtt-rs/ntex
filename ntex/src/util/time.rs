@@ -163,9 +163,9 @@ mod tests {
     #[crate::rt_test]
     async fn low_res_timee() {
         let f = LowResTime::default();
-        let srv = f.new_service(()).await.unwrap();
+        let srv = f.new_service(()).await.expect("");
         assert!(lazy(|cx| srv.poll_ready(cx)).await.is_ready());
-        srv.call(()).await.unwrap();
+        srv.call(()).await.expect("");
     }
 
     /// State Under Test: Two calls of `SystemTimeService::now()` return the same value if they are done within resolution interval of `SystemTimeService`.
@@ -203,14 +203,14 @@ mod tests {
         let first_time = time_service
             .now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap();
+            .expect("");
 
         sleep(wait_time).await;
 
         let second_time = time_service
             .now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap();
+            .expect("");
 
         assert!(second_time - first_time >= wait_time);
     }

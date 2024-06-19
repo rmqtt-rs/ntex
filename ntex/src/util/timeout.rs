@@ -301,7 +301,7 @@ mod tests {
             Timeout::new(resolution).clone(),
             fn_factory(|| async { Ok::<_, ()>(SleepService(wait_time)) }),
         );
-        let srv = timeout.new_service(&()).await.unwrap();
+        let srv = timeout.new_service(&()).await.expect("");
 
         let res = srv.call(()).await.unwrap_err();
         assert_eq!(res, TimeoutError::Timeout);

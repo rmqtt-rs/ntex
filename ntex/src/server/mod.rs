@@ -171,10 +171,16 @@ impl Future for Server {
             this.1 = Some(rx);
         }
 
-        match Pin::new(this.1.as_mut().unwrap()).poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(_)) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(_)) => Poll::Ready(Ok(())),
+        match this.1.as_mut() {
+            Some(rx) => match Pin::new(rx).poll(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(Ok(_)) => Poll::Ready(Ok(())),
+                Poll::Ready(Err(_)) => Poll::Ready(Ok(())),
+            },
+            None => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "A parameter was incorrect",
+            ))),
         }
     }
 }

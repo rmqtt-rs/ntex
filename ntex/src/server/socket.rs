@@ -48,10 +48,20 @@ impl fmt::Debug for Listener {
 impl fmt::Display for Listener {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Listener::Tcp(ref lst) => write!(f, "{}", lst.local_addr().ok().unwrap()),
+            Listener::Tcp(ref lst) => {
+                if let Some(addr) = lst.local_addr().ok() {
+                    write!(f, "{}", addr)
+                } else {
+                    write!(f, "")
+                }
+            }
             #[cfg(unix)]
             Listener::Uds(ref lst) => {
-                write!(f, "{:?}", lst.local_addr().ok().unwrap())
+                if let Some(addr) = lst.local_addr().ok() {
+                    write!(f, "{}", addr)
+                } else {
+                    write!(f, "")
+                }
             }
         }
     }
@@ -69,12 +79,12 @@ impl Listener {
         Listener::Uds(mio::net::UnixListener::from_std(lst))
     }
 
-    pub(crate) fn local_addr(&self) -> SocketAddr {
-        match self {
-            Listener::Tcp(lst) => SocketAddr::Tcp(lst.local_addr().unwrap()),
+    pub(crate) fn local_addr(&self) -> io::Result<SocketAddr> {
+        Ok(match self {
+            Listener::Tcp(lst) => SocketAddr::Tcp(lst.local_addr()?),
             #[cfg(unix)]
-            Listener::Uds(lst) => SocketAddr::Uds(lst.local_addr().unwrap()),
-        }
+            Listener::Uds(lst) => SocketAddr::Uds(lst.local_addr()?),
+        })
     }
 
     pub(crate) fn accept(&self) -> io::Result<Option<Stream>> {
@@ -212,14 +222,14 @@ mod tests {
     fn socket_addr() {
         use socket2::{Domain, SockAddr, Socket, Type};
 
-        let addr = SocketAddr::Tcp("127.0.0.1:8080".parse().unwrap());
+        let addr = SocketAddr::Tcp("127.0.0.1:8080".parse().expect(""));
         assert!(format!("{:?}", addr).contains("127.0.0.1:8080"));
         assert_eq!(format!("{}", addr), "127.0.0.1:8080");
 
-        let addr: net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
-        socket.set_reuse_address(true).unwrap();
-        socket.bind(&SockAddr::from(addr)).unwrap();
+        let addr: net::SocketAddr = "127.0.0.1:0".parse().expect("");
+        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).expect("");
+        socket.set_reuse_address(true).expect("");
+        socket.bind(&SockAddr::from(addr)).expect("");
         let tcp = net::TcpListener::from(socket);
         let lst = Listener::Tcp(mio::net::TcpListener::from_std(tcp));
         assert!(format!("{:?}", lst).contains("TcpListener"));

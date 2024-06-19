@@ -144,12 +144,15 @@ where
         match this.state.as_mut().project() {
             StateProject::A { fut, b } => match fut.poll(cx)? {
                 Poll::Ready(res) => {
-                    let b = b.take().unwrap();
-                    this.state.set(State::Empty);
-                    let b = b.as_ref();
-                    let fut = (&b.2)(res, &b.1);
-                    this.state.set(State::B { fut });
-                    self.poll(cx)
+                    if let Some(b) = b.take() {
+                        this.state.set(State::Empty);
+                        let b = b.as_ref();
+                        let fut = (&b.2)(res, &b.1);
+                        this.state.set(State::B { fut });
+                        self.poll(cx)
+                    } else {
+                        unreachable!()
+                    }
                 }
                 Poll::Pending => Poll::Pending,
             },
@@ -273,13 +276,9 @@ where
             }
         }
 
-        if this.a.is_some() && this.b.is_some() {
+        if let (Some(a_value), Some(b_value)) = (this.a.take(), this.b.take()) {
             Poll::Ready(Ok(AndThenApplyFn {
-                srv: Rc::new((
-                    this.a.take().unwrap(),
-                    this.b.take().unwrap(),
-                    this.f.clone(),
-                )),
+                srv: Rc::new((a_value, b_value, this.f.clone())),
                 r: PhantomData,
             }))
         } else {
@@ -325,7 +324,7 @@ mod tests {
 
         let res = srv.call("srv").await;
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), ("srv", ()));
+        assert_eq!(res.expect(""), ("srv", ()));
 
         let res = lazy(|cx| srv.poll_shutdown(cx, false)).await;
         assert_eq!(res, Poll::Ready(()));
@@ -343,12 +342,12 @@ mod tests {
                     },
                 )
                 .clone();
-        let srv = new_srv.new_service(()).await.unwrap();
+        let srv = new_srv.new_service(()).await.expect("");
         let res = lazy(|cx| srv.poll_ready(cx)).await;
         assert_eq!(res, Poll::Ready(Ok(())));
 
         let res = srv.call("srv").await;
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), ("srv", ()));
+        assert_eq!(res.expect(""), ("srv", ()));
     }
 }

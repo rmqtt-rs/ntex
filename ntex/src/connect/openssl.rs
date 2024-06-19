@@ -117,10 +117,10 @@ mod tests {
             crate::fn_service(|_| async { Ok::<_, ()>(()) })
         });
 
-        let ssl = SslConnector::builder(SslMethod::tls()).unwrap();
+        let ssl = SslConnector::builder(SslMethod::tls()).expect("");
         let factory = OpensslConnector::new(ssl.build()).clone();
 
-        let srv = factory.new_service(()).await.unwrap();
+        let srv = factory.new_service(()).await.expect("");
         let result = srv
             .call(Connect::new("").set_addr(Some(server.addr())))
             .await;

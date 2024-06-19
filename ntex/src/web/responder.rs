@@ -313,7 +313,9 @@ impl<T: Responder<Err>, Err> CustomResponder<T, Err> {
         match HeaderName::try_from(key) {
             Ok(key) => match HeaderValue::try_from(value) {
                 Ok(value) => {
-                    self.headers.as_mut().unwrap().append(key, value);
+                    if let Some(headers) = self.headers.as_mut() {
+                        headers.append(key, value);
+                    }
                 }
                 Err(e) => self.error = Some(e.into()),
             },
@@ -448,11 +450,11 @@ pub(crate) mod tests {
         .await;
 
         let req = TestRequest::with_uri("/index.html").to_request();
-        let resp = srv.call(req).await.unwrap();
+        let resp = srv.call(req).await.expect("");
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
         let req = TestRequest::with_uri("/index.html?query=test").to_request();
-        let resp = srv.call(req).await.unwrap();
+        let resp = srv.call(req).await.expect("");
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
@@ -468,11 +470,11 @@ pub(crate) mod tests {
         .await;
 
         let req = TestRequest::with_uri("/none").to_request();
-        let resp = srv.call(req).await.unwrap();
+        let resp = srv.call(req).await.expect("");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
         let req = TestRequest::with_uri("/some").to_request();
-        let resp = srv.call(req).await.unwrap();
+        let resp = srv.call(req).await.expect("");
         assert_eq!(resp.status(), StatusCode::OK);
         match resp.response().body() {
             ResponseBody::Body(Body::Bytes(ref b)) => {
@@ -491,7 +493,7 @@ pub(crate) mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.body().get_ref(), b"test");
         assert_eq!(
-            resp.headers().get(CONTENT_TYPE).unwrap(),
+            resp.headers().get(CONTENT_TYPE).expect(""),
             HeaderValue::from_static("text/plain; charset=utf-8")
         );
 
@@ -499,7 +501,7 @@ pub(crate) mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.body().get_ref(), b"test");
         assert_eq!(
-            resp.headers().get(CONTENT_TYPE).unwrap(),
+            resp.headers().get(CONTENT_TYPE).expect(""),
             HeaderValue::from_static("application/octet-stream")
         );
 
@@ -507,7 +509,7 @@ pub(crate) mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.body().get_ref(), b"test");
         assert_eq!(
-            resp.headers().get(CONTENT_TYPE).unwrap(),
+            resp.headers().get(CONTENT_TYPE).expect(""),
             HeaderValue::from_static("text/plain; charset=utf-8")
         );
 
@@ -515,7 +517,7 @@ pub(crate) mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.body().get_ref(), b"test");
         assert_eq!(
-            resp.headers().get(CONTENT_TYPE).unwrap(),
+            resp.headers().get(CONTENT_TYPE).expect(""),
             HeaderValue::from_static("text/plain; charset=utf-8")
         );
 
@@ -525,7 +527,7 @@ pub(crate) mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.body().get_ref(), b"test");
         assert_eq!(
-            resp.headers().get(CONTENT_TYPE).unwrap(),
+            resp.headers().get(CONTENT_TYPE).expect(""),
             HeaderValue::from_static("application/octet-stream")
         );
 
@@ -535,7 +537,7 @@ pub(crate) mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.body().get_ref(), b"test");
         assert_eq!(
-            resp.headers().get(CONTENT_TYPE).unwrap(),
+            resp.headers().get(CONTENT_TYPE).expect(""),
             HeaderValue::from_static("application/octet-stream")
         );
 
@@ -560,7 +562,7 @@ pub(crate) mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.body().get_ref(), b"test");
         assert_eq!(
-            resp.headers().get(CONTENT_TYPE).unwrap(),
+            resp.headers().get(CONTENT_TYPE).expect(""),
             HeaderValue::from_static("text/plain; charset=utf-8")
         );
 
@@ -591,7 +593,7 @@ pub(crate) mod tests {
         assert_eq!(res.status(), StatusCode::OK);
         assert_eq!(res.body().get_ref(), b"test");
         assert_eq!(
-            res.headers().get(CONTENT_TYPE).unwrap(),
+            res.headers().get(CONTENT_TYPE).expect(""),
             HeaderValue::from_static("json")
         );
     }
@@ -618,7 +620,7 @@ pub(crate) mod tests {
         assert_eq!(res.status(), StatusCode::OK);
         assert_eq!(res.body().get_ref(), b"test");
         assert_eq!(
-            res.headers().get(CONTENT_TYPE).unwrap(),
+            res.headers().get(CONTENT_TYPE).expect(""),
             HeaderValue::from_static("json")
         );
     }

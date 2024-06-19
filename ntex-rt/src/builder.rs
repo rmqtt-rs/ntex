@@ -48,7 +48,7 @@ impl Builder {
     /// Create new System.
     ///
     /// This method panics if it can not create tokio runtime
-    pub fn finish(self) -> SystemRunner {
+    pub fn finish(self) -> io::Result<SystemRunner> {
         self.create_runtime(|| {})
     }
 
@@ -68,7 +68,7 @@ impl Builder {
     where
         F: FnOnce() + 'static,
     {
-        self.create_runtime(f).run()
+        self.create_runtime(f)?.run()
     }
 
     fn create_async_runtime(self, local: &LocalSet) -> AsyncSystemRunner {
@@ -90,14 +90,14 @@ impl Builder {
         AsyncSystemRunner { stop, system }
     }
 
-    fn create_runtime<F>(self, f: F) -> SystemRunner
+    fn create_runtime<F>(self, f: F) -> io::Result<SystemRunner>
     where
         F: FnOnce() + 'static,
     {
         let (stop_tx, stop) = channel();
         let (sys_sender, sys_receiver) = unbounded_channel();
 
-        let rt = Runtime::new().unwrap();
+        let rt = Runtime::new()?;
 
         // system arbiter
         let system = System::construct(
@@ -111,7 +111,7 @@ impl Builder {
         // init system arbiter and run configuration method
         rt.block_on(lazy(move |_| f()));
 
-        SystemRunner { rt, stop, system }
+        Ok(SystemRunner { rt, stop, system })
     }
 }
 
@@ -210,37 +210,37 @@ mod tests {
         thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .build()
-                .unwrap();
+                .expect("");
             let local = tokio::task::LocalSet::new();
 
             let runner = crate::System::build()
                 .stop_on_panic(true)
                 .finish_with(&local);
 
-            tx.send(System::current()).unwrap();
+            tx.send(System::current()).expect("");
             let _ = rt.block_on(local.run_until(runner.run()));
         });
         let mut s = System::new("test");
 
-        let sys = rx.recv().unwrap();
+        let sys = rx.recv().expect("");
         let id = sys.id();
         let (tx, rx) = mpsc::channel();
         sys.arbiter().exec_fn(move || {
             let _ = tx.send(System::current().id());
         });
-        let id2 = rx.recv().unwrap();
+        let id2 = rx.recv().expect("");
         assert_eq!(id, id2);
 
         let id2 = s
             .block_on(sys.arbiter().exec(|| System::current().id()))
-            .unwrap();
+            .expect("");
         assert_eq!(id, id2);
 
         let (tx, rx) = mpsc::channel();
         sys.arbiter().spawn(Box::pin(async move {
             let _ = tx.send(System::current().id());
         }));
-        let id2 = rx.recv().unwrap();
+        let id2 = rx.recv().expect("");
         assert_eq!(id, id2);
     }
 }

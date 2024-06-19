@@ -644,11 +644,11 @@ mod tests {
         )
         .await;
         let req = TestRequest::with_uri("/test").to_request();
-        let resp = srv.call(req).await.unwrap();
+        let resp = srv.call(req).await.expect("");
         assert_eq!(resp.status(), StatusCode::OK);
 
         let req = TestRequest::with_uri("/blah").to_request();
-        let resp = srv.call(req).await.unwrap();
+        let resp = srv.call(req).await.expect("");
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
         let srv = init_service(
@@ -668,17 +668,17 @@ mod tests {
         .await;
 
         let req = TestRequest::with_uri("/blah").to_request();
-        let resp = srv.call(req).await.unwrap();
+        let resp = srv.call(req).await.expect("");
         assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
 
         let req = TestRequest::with_uri("/test2").to_request();
-        let resp = srv.call(req).await.unwrap();
+        let resp = srv.call(req).await.expect("");
         assert_eq!(resp.status(), StatusCode::OK);
 
         let req = TestRequest::with_uri("/test2")
             .method(Method::POST)
             .to_request();
-        let resp = srv.call(req).await.unwrap();
+        let resp = srv.call(req).await.expect("");
         assert_eq!(resp.status(), StatusCode::CREATED);
     }
 
@@ -694,7 +694,7 @@ mod tests {
         )
         .await;
         let req = TestRequest::default().to_request();
-        let resp = srv.call(req).await.unwrap();
+        let resp = srv.call(req).await.expect("");
         assert_eq!(resp.status(), StatusCode::OK);
 
         let srv = init_service(
@@ -707,7 +707,7 @@ mod tests {
         )
         .await;
         let req = TestRequest::default().to_request();
-        let res = srv.call(req).await.unwrap();
+        let res = srv.call(req).await.expect("");
         assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
@@ -715,13 +715,13 @@ mod tests {
     async fn test_extension() {
         let srv = init_service(App::new().app_data(10usize).service(
             web::resource("/").to(|req: HttpRequest| async move {
-                assert_eq!(*req.app_data::<usize>().unwrap(), 10);
+                assert_eq!(*req.app_data::<usize>().expect(""), 10);
                 HttpResponse::Ok()
             }),
         ))
         .await;
         let req = TestRequest::default().to_request();
-        let resp = srv.call(req).await.unwrap();
+        let resp = srv.call(req).await.expect("");
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
@@ -755,7 +755,7 @@ mod tests {
         let resp = call_service(&srv, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
-            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            resp.headers().get(header::CONTENT_TYPE).expect(""),
             HeaderValue::from_static("0001")
         );
     }
@@ -775,7 +775,7 @@ mod tests {
         let resp = call_service(&srv, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
-            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            resp.headers().get(header::CONTENT_TYPE).expect(""),
             HeaderValue::from_static("0001")
         );
     }
@@ -802,7 +802,7 @@ mod tests {
         let resp = call_service(&srv, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
-            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            resp.headers().get(header::CONTENT_TYPE).expect(""),
             HeaderValue::from_static("0001")
         );
     }
@@ -829,7 +829,7 @@ mod tests {
         let resp = call_service(&srv, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(
-            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            resp.headers().get(header::CONTENT_TYPE).expect(""),
             HeaderValue::from_static("0001")
         );
     }
@@ -861,7 +861,7 @@ mod tests {
                     web::get().to(|req: HttpRequest| async move {
                         HttpResponse::Ok().body(format!(
                             "{}",
-                            req.url_for("youtube", &["12345"]).unwrap()
+                            req.url_for("youtube", &["12345"]).expect("")
                         ))
                     }),
                 ),

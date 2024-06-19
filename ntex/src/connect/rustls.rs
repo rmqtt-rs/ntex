@@ -118,7 +118,7 @@ mod tests {
             .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
         let factory = RustlsConnector::new(Arc::new(config)).clone();
 
-        let srv = factory.new_service(()).await.unwrap();
+        let srv = factory.new_service(()).await.expect("");
         let result = srv
             .call(Connect::new("www.rust-lang.org").set_addr(Some(server.addr())))
             .await;

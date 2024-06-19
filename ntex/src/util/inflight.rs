@@ -167,7 +167,7 @@ mod tests {
             fn_factory(|| async { Ok(SleepService(wait_time)) }),
         );
 
-        let srv = srv.new_service(&()).await.unwrap();
+        let srv = srv.new_service(&()).await.expect("");
         assert_eq!(lazy(|cx| srv.poll_ready(cx)).await, Poll::Ready(Ok(())));
 
         let res = srv.call(());

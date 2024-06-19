@@ -33,7 +33,7 @@ use crate::server::{Server, ServerBuilder, StreamServiceFactory};
 ///     );
 ///
 ///     let req = Client::new().get("http://127.0.0.1:{}", srv.addr().port());
-///     let response = req.send().await.unwrap();
+///     let response = req.send().await.expect("");
 ///     assert!(response.status().is_success());
 /// }
 /// ```
@@ -42,9 +42,9 @@ pub fn test_server<F: StreamServiceFactory<TcpStream>>(factory: F) -> TestServer
 
     // run server in separate thread
     thread::spawn(move || {
-        let mut sys = System::new("ntex-test-server");
-        let tcp = net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let local_addr = tcp.local_addr().unwrap();
+        let mut sys = System::new("ntex-test-server").expect("");
+        let tcp = net::TcpListener::bind("127.0.0.1:0").expect("");
+        let local_addr = tcp.local_addr().expect("");
 
         sys.exec(|| {
             Server::build()
@@ -55,11 +55,11 @@ pub fn test_server<F: StreamServiceFactory<TcpStream>>(factory: F) -> TestServer
             Ok::<_, io::Error>(())
         })?;
 
-        tx.send((System::current(), local_addr)).unwrap();
+        tx.send((System::current(), local_addr)).expect("");
         sys.run()
     });
 
-    let (system, addr) = rx.recv().unwrap();
+    let (system, addr) = rx.recv().expect("");
 
     TestServer { addr, system }
 }
@@ -73,7 +73,7 @@ where
 
     // run server in separate thread
     thread::spawn(move || {
-        let mut sys = System::new("ntex-test-server");
+        let mut sys = System::new("ntex-test-server").expect("");
 
         sys.exec(|| {
             factory(Server::build())
@@ -82,14 +82,14 @@ where
                 .start();
         });
 
-        tx.send(System::current()).unwrap();
+        tx.send(System::current()).expect("");
         sys.run()
     });
-    let system = rx.recv().unwrap();
+    let system = rx.recv().expect("");
 
     TestServer {
         system,
-        addr: "127.0.0.1:0".parse().unwrap(),
+        addr: "127.0.0.1:0".parse().expect(""),
     }
 }
 
@@ -117,12 +117,12 @@ impl TestServer {
 
     /// Get first available unused address
     pub fn unused_addr() -> net::SocketAddr {
-        let addr: net::SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
-        socket.set_reuse_address(true).unwrap();
-        socket.bind(&SockAddr::from(addr)).unwrap();
+        let addr: net::SocketAddr = "127.0.0.1:0".parse().expect("");
+        let socket = Socket::new(Domain::IPV4, Type::STREAM, None).expect("");
+        socket.set_reuse_address(true).expect("");
+        socket.bind(&SockAddr::from(addr)).expect("");
         let tcp = net::TcpListener::from(socket);
-        tcp.local_addr().unwrap()
+        tcp.local_addr().expect("")
     }
 }
 

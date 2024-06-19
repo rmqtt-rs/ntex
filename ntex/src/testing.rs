@@ -1,9 +1,10 @@
 use std::cell::{Cell, RefCell};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 use std::{cmp, fmt, io, mem, pin::Pin, time};
 
 use bytes::BytesMut;
+use parking_lot::Mutex;
 
 use crate::codec::{AsyncRead, AsyncWrite, ReadBuf};
 use crate::rt::time::sleep;
@@ -14,7 +15,7 @@ struct AtomicWaker(Arc<Mutex<RefCell<Option<Waker>>>>);
 
 impl AtomicWaker {
     fn wake(&self) {
-        if let Some(waker) = self.0.lock().unwrap().borrow_mut().take() {
+        if let Some(waker) = self.0.lock().borrow_mut().take() {
             waker.wake()
         }
     }
@@ -125,22 +126,22 @@ impl Io {
 
     /// Check if channel is closed from remoote side
     pub fn is_closed(&self) -> bool {
-        self.remote.lock().unwrap().borrow().is_closed()
+        self.remote.lock().borrow().is_closed()
     }
 
     /// Set read to Pending state
     pub fn read_pending(&self) {
-        self.remote.lock().unwrap().borrow_mut().read = IoState::Pending;
+        self.remote.lock().borrow_mut().read = IoState::Pending;
     }
 
     /// Set read to error
     pub fn read_error(&self, err: io::Error) {
-        self.remote.lock().unwrap().borrow_mut().read = IoState::Err(err);
+        self.remote.lock().borrow_mut().read = IoState::Err(err);
     }
 
     /// Set write error on remote side
     pub fn write_error(&self, err: io::Error) {
-        self.local.lock().unwrap().borrow_mut().write = IoState::Err(err);
+        self.local.lock().borrow_mut().write = IoState::Err(err);
     }
 
     /// Access read buffer.
@@ -148,7 +149,7 @@ impl Io {
     where
         F: FnOnce(&mut BytesMut) -> R,
     {
-        let guard = self.local.lock().unwrap();
+        let guard = self.local.lock();
         let mut ch = guard.borrow_mut();
         f(&mut ch.buf)
     }
@@ -158,7 +159,7 @@ impl Io {
     where
         F: FnOnce(&mut BytesMut) -> R,
     {
-        let guard = self.remote.lock().unwrap();
+        let guard = self.remote.lock();
         let mut ch = guard.borrow_mut();
         f(&mut ch.buf)
     }
@@ -166,7 +167,7 @@ impl Io {
     /// Closed remote side.
     pub async fn close(&self) {
         {
-            let guard = self.remote.lock().unwrap();
+            let guard = self.remote.lock();
             let mut remote = guard.borrow_mut();
             remote.read = IoState::Close;
             remote.waker.wake();
@@ -176,7 +177,7 @@ impl Io {
 
     /// Add extra data to the remote buffer and notify reader
     pub fn write<T: AsRef<[u8]>>(&self, data: T) {
-        let guard = self.remote.lock().unwrap();
+        let guard = self.remote.lock();
         let mut write = guard.borrow_mut();
         write.buf.extend_from_slice(data.as_ref());
         write.waker.wake();
@@ -185,21 +186,21 @@ impl Io {
     /// Read any available data
     pub fn remote_buffer_cap(&self, cap: usize) {
         // change cap
-        self.local.lock().unwrap().borrow_mut().buf_cap = cap;
+        self.local.lock().borrow_mut().buf_cap = cap;
         // wake remote
-        self.remote.lock().unwrap().borrow().waker.wake();
+        self.remote.lock().borrow().waker.wake();
     }
 
     /// Read any available data
     pub fn read_any(&self) -> BytesMut {
-        self.local.lock().unwrap().borrow_mut().buf.split()
+        self.local.lock().borrow_mut().buf.split()
     }
 
     /// Read data, if data is not available wait for it
     pub async fn read(&self) -> Result<BytesMut, io::Error> {
-        if self.local.lock().unwrap().borrow().buf.is_empty() {
+        if self.local.lock().borrow().buf.is_empty() {
             poll_fn(|cx| {
-                let guard = self.local.lock().unwrap();
+                let guard = self.local.lock();
                 let read = guard.borrow_mut();
                 if read.buf.is_empty() {
                     let closed = match self.tp {
@@ -211,8 +212,7 @@ impl Io {
                     if closed {
                         Poll::Ready(())
                     } else {
-                        *read.waker.0.lock().unwrap().borrow_mut() =
-                            Some(cx.waker().clone());
+                        *read.waker.0.lock().borrow_mut() = Some(cx.waker().clone());
                         drop(read);
                         drop(guard);
                         Poll::Pending
@@ -223,7 +223,7 @@ impl Io {
             })
             .await;
         }
-        Ok(self.local.lock().unwrap().borrow_mut().buf.split())
+        Ok(self.local.lock().borrow_mut().buf.split())
     }
 }
 
@@ -262,9 +262,9 @@ impl AsyncRead for Io {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        let guard = self.local.lock().unwrap();
+        let guard = self.local.lock();
         let mut ch = guard.borrow_mut();
-        *ch.waker.0.lock().unwrap().borrow_mut() = Some(cx.waker().clone());
+        *ch.waker.0.lock().borrow_mut() = Some(cx.waker().clone());
 
         if !ch.buf.is_empty() {
             let size = std::cmp::min(ch.buf.len(), buf.remaining());
@@ -291,7 +291,7 @@ impl AsyncWrite for Io {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        let guard = self.remote.lock().unwrap();
+        let guard = self.remote.lock();
         let mut ch = guard.borrow_mut();
 
         match mem::take(&mut ch.write) {
@@ -304,31 +304,15 @@ impl AsyncWrite for Io {
                     ch.waker.wake();
                     Poll::Ready(Ok(cap))
                 } else {
-                    *self
-                        .local
-                        .lock()
-                        .unwrap()
-                        .borrow_mut()
-                        .waker
-                        .0
-                        .lock()
-                        .unwrap()
-                        .borrow_mut() = Some(cx.waker().clone());
+                    *self.local.lock().borrow_mut().waker.0.lock().borrow_mut() =
+                        Some(cx.waker().clone());
                     Poll::Pending
                 }
             }
             IoState::Close => Poll::Ready(Ok(0)),
             IoState::Pending => {
-                *self
-                    .local
-                    .lock()
-                    .unwrap()
-                    .borrow_mut()
-                    .waker
-                    .0
-                    .lock()
-                    .unwrap()
-                    .borrow_mut() = Some(cx.waker().clone());
+                *self.local.lock().borrow_mut().waker.0.lock().borrow_mut() =
+                    Some(cx.waker().clone());
                 Poll::Pending
             }
             IoState::Err(e) => Poll::Ready(Err(e)),
@@ -340,12 +324,7 @@ impl AsyncWrite for Io {
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.local
-            .lock()
-            .unwrap()
-            .borrow_mut()
-            .flags
-            .insert(Flags::CLOSED);
+        self.local.lock().borrow_mut().flags.insert(Flags::CLOSED);
         Poll::Ready(Ok(()))
     }
 }

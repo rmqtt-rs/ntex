@@ -35,13 +35,15 @@ impl<Err: ErrorRenderer> Route<Err> {
     }
 
     pub(super) fn take_guards(&mut self) -> Vec<Box<dyn Guard>> {
-        for m in &self.methods {
-            Rc::get_mut(&mut self.guards)
-                .unwrap()
-                .push(Box::new(guard::Method(m.clone())));
+        if let Some(guards) = Rc::get_mut(&mut self.guards) {
+            for m in &self.methods {
+                guards.push(Box::new(guard::Method(m.clone())));
+            }
+            mem::take(guards)
+        } else {
+            log::error!("Failed to get mutable reference to guards");
+            Vec::new()
         }
-
-        mem::take(Rc::get_mut(&mut self.guards).unwrap())
     }
 
     pub(super) fn service(&self) -> RouteService<Err> {
@@ -138,7 +140,11 @@ impl<Err: ErrorRenderer> Route<Err> {
     /// # }
     /// ```
     pub fn guard<F: Guard + 'static>(mut self, f: F) -> Self {
-        Rc::get_mut(&mut self.guards).unwrap().push(Box::new(f));
+        if let Some(guards) = Rc::get_mut(&mut self.guards) {
+            guards.push(Box::new(f));
+        } else {
+            log::error!("Failed to get mutable reference to guards");
+        }
         self
     }
 

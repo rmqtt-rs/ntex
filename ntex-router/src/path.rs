@@ -243,7 +243,7 @@ mod tests {
         assert_eq!(p2.get_ref().as_str(), "test");
 
         p.skip(2);
-        assert_eq!(p.get("tail").unwrap(), "st");
+        assert_eq!(p.get("tail").expect(""), "st");
         assert_eq!(p.get("unknown"), None);
         assert_eq!(p.query("tail"), "st");
         assert_eq!(p.query("unknown"), "");
@@ -253,6 +253,6 @@ mod tests {
         assert_eq!(p.unprocessed(), "test");
 
         p.segments.push(("k1", PathItem::IdxSegment(0, 2)));
-        assert_eq!(p.get("k1").unwrap(), "te");
+        assert_eq!(p.get("k1").expect(""), "te");
     }
 }

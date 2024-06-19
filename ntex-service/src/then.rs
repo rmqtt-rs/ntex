@@ -104,7 +104,7 @@ where
         match this.state.as_mut().project() {
             StateProject::A { fut, b } => match fut.poll(cx) {
                 Poll::Ready(res) => {
-                    let b = b.take().unwrap();
+                    let b = b.take().ok_or_else(|| unreachable!())?;
                     this.state.set(State::Empty); // drop fut A
                     let fut = b.as_ref().1.call(res);
                     this.state.set(State::B { fut });
@@ -243,11 +243,9 @@ where
                 *this.b = Some(service);
             }
         }
-        if this.a.is_some() && this.b.is_some() {
-            Poll::Ready(Ok(ThenService::new(
-                this.a.take().unwrap(),
-                this.b.take().unwrap(),
-            )))
+
+        if let (Some(a_value), Some(b_value)) = (this.a.take(), this.b.take()) {
+            Poll::Ready(Ok(ThenService::new(a_value, b_value)))
         } else {
             Poll::Pending
         }
@@ -322,11 +320,11 @@ mod tests {
 
         let res = srv.call(Ok("srv1")).await;
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), ("srv1", "ok"));
+        assert_eq!(res.expect(""), ("srv1", "ok"));
 
         let res = srv.call(Err("srv")).await;
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), ("srv2", "err"));
+        assert_eq!(res.expect(""), ("srv2", "err"));
     }
 
     #[ntex::test]
@@ -337,13 +335,13 @@ mod tests {
         let factory = pipeline_factory(blank)
             .then(move || Ready::Ok(Srv2(cnt.clone())))
             .clone();
-        let srv = factory.new_service(&()).await.unwrap();
+        let srv = factory.new_service(&()).await.expect("");
         let res = srv.call(Ok("srv1")).await;
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), ("srv1", "ok"));
+        assert_eq!(res.expect(""), ("srv1", "ok"));
 
         let res = srv.call(Err("srv")).await;
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), ("srv2", "err"));
+        assert_eq!(res.expect(""), ("srv2", "err"));
     }
 }

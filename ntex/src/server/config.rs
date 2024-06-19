@@ -25,7 +25,12 @@ pub struct ServiceConfig {
 }
 
 impl ServiceConfig {
-    pub(super) fn new(threads: usize, backlog: i32, reuseaddr: Option<bool>, reuseport: Option<bool>) -> ServiceConfig {
+    pub(super) fn new(
+        threads: usize,
+        backlog: i32,
+        reuseaddr: Option<bool>,
+        reuseport: Option<bool>,
+    ) -> ServiceConfig {
         ServiceConfig {
             threads,
             backlog,
@@ -164,7 +169,7 @@ impl InternalServiceFactory for ConfiguredService {
                         }
                     }
                 } else {
-                    let name = names.remove(&token).unwrap().0;
+                    let name = names.remove(&token).map(|(name, _)| name);
                     res.push((
                         token,
                         Box::new(StreamService::new(service::fn_service(

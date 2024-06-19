@@ -92,8 +92,10 @@ impl Timer {
                     while let Some(key) = i.notifications.keys().next() {
                         let key = *key;
                         if key <= now {
-                            for st in i.notifications.remove(&key).unwrap() {
-                                st.keepalive_timeout();
+                            if let Some(states) = i.notifications.remove(&key) {
+                                for st in states {
+                                    st.keepalive_timeout();
+                                }
                             }
                         } else {
                             break;

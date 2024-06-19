@@ -582,7 +582,7 @@ mod tests {
             .is_ready());
 
         let data = Bytes::from_static(b"GET /test HTTP/1.1\r\n\r\n");
-        Pin::new(&mut server).start_send(data).unwrap();
+        Pin::new(&mut server).start_send(data).expect("");
         assert_eq!(client.read_any(), b"".as_ref());
         assert_eq!(server.read_buf(), b"".as_ref());
         assert_eq!(server.write_buf(), b"GET /test HTTP/1.1\r\n\r\n".as_ref());
@@ -611,7 +611,7 @@ mod tests {
             .await
             .is_ready());
         let data = Bytes::from_static(b"GET /test HTTP/1.1\r\n\r\n");
-        Pin::new(&mut server).start_send(data).unwrap();
+        Pin::new(&mut server).start_send(data).expect("");
 
         client.remote_buffer_cap(3);
         assert!(lazy(|cx| Pin::new(&mut server).poll_flush(cx))
@@ -651,7 +651,7 @@ mod tests {
 
         let item = lazy(|cx| Pin::new(&mut server).next_item(cx))
             .await
-            .map(|i| i.unwrap().unwrap().freeze());
+            .map(|i| i.expect("").expect("").freeze());
         assert_eq!(
             item,
             Poll::Ready(Bytes::from_static(b"GET /test HTTP/1.1\r\n\r\n"))
@@ -677,7 +677,7 @@ mod tests {
 
         let item = lazy(|cx| Pin::new(&mut server).next_item(cx))
             .await
-            .map(|i| i.unwrap().unwrap().freeze());
+            .map(|i| i.expect("").expect("").freeze());
         assert_eq!(
             item,
             Poll::Ready(Bytes::from_static(b"GET /test HTTP/1.1\r\n\r\n"))
@@ -685,7 +685,7 @@ mod tests {
         assert_eq!(
             lazy(|cx| Pin::new(&mut server).next_item(cx))
                 .await
-                .map(|i| i.unwrap().is_err()),
+                .map(|i| i.expect("").is_err()),
             Poll::Ready(true)
         );
     }

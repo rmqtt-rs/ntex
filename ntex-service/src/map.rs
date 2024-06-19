@@ -234,7 +234,7 @@ mod tests {
         let srv = Srv.map(|_| "ok").clone();
         let res = srv.call(()).await;
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), "ok");
+        assert_eq!(res.expect(""), "ok");
 
         let res = lazy(|cx| srv.poll_ready(cx)).await;
         assert_eq!(res, Poll::Ready(Ok(())));
@@ -248,7 +248,7 @@ mod tests {
         let srv = crate::pipeline(Srv).map(|_| "ok").clone();
         let res = srv.call(()).await;
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), "ok");
+        assert_eq!(res.expect(""), "ok");
 
         let res = lazy(|cx| srv.poll_ready(cx)).await;
         assert_eq!(res, Poll::Ready(Ok(())));
@@ -263,10 +263,10 @@ mod tests {
             .into_factory()
             .map(|_| "ok")
             .clone();
-        let srv = new_srv.new_service(&()).await.unwrap();
+        let srv = new_srv.new_service(&()).await.expect("");
         let res = srv.call(()).await;
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), ("ok"));
+        assert_eq!(res.expect(""), ("ok"));
     }
 
     #[ntex::test]
@@ -275,9 +275,9 @@ mod tests {
             crate::pipeline_factory((|| async { Ok::<_, ()>(Srv) }).into_factory())
                 .map(|_| "ok")
                 .clone();
-        let srv = new_srv.new_service(&()).await.unwrap();
+        let srv = new_srv.new_service(&()).await.expect("");
         let res = srv.call(()).await;
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), ("ok"));
+        assert_eq!(res.expect(""), ("ok"));
     }
 }

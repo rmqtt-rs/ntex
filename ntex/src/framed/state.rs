@@ -852,15 +852,21 @@ impl OnDisconnect {
         let mut on_disconnect = self.inner.on_disconnect.borrow_mut();
 
         let inner = unsafe { on_disconnect.get_unchecked_mut(self.token) };
-        if inner.is_none() {
-            let waker = LocalWaker::default();
-            waker.register(cx.waker());
-            *inner = Some(waker);
-        } else if !inner.as_mut().unwrap().register(cx.waker()) {
-            return Poll::Ready(());
+        match inner {
+            None => {
+                let waker = LocalWaker::default();
+                waker.register(cx.waker());
+                *inner = Some(waker);
+            }
+            Some(waker) => {
+                if !waker.register(cx.waker()) {
+                    return Poll::Ready(());
+                }
+            }
         }
         Poll::Pending
     }
+
 }
 
 impl Clone for OnDisconnect {
@@ -907,7 +913,7 @@ mod tests {
         assert!(!state.read().is_full());
         assert!(!state.write().is_full());
 
-        let msg = state.next(&mut server, &BytesCodec).await.unwrap().unwrap();
+        let msg = state.next(&mut server, &BytesCodec).await.expect("").expect("");
         assert_eq!(msg, Bytes::from_static(BIN));
 
         let res =
@@ -919,7 +925,7 @@ mod tests {
             poll_fn(|cx| Poll::Ready(state.poll_next(&mut server, &BytesCodec, cx)))
                 .await;
         if let Poll::Ready(msg) = res {
-            assert_eq!(msg.unwrap().unwrap(), Bytes::from_static(BIN));
+            assert_eq!(msg.expect("").expect(""), Bytes::from_static(BIN));
         }
 
         client.read_error(io::Error::new(io::ErrorKind::Other, "err"));
@@ -943,8 +949,8 @@ mod tests {
         state
             .send(&mut server, &BytesCodec, Bytes::from_static(b"test"))
             .await
-            .unwrap();
-        let buf = client.read().await.unwrap();
+            .expect("");
+        let buf = client.read().await.expect("");
         assert_eq!(buf, Bytes::from_static(b"test"));
 
         client.write_error(io::Error::new(io::ErrorKind::Other, "err"));

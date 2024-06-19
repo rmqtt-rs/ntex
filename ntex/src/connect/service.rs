@@ -172,11 +172,15 @@ impl<T: Address> TcpConnectorResponse<T> {
     fn can_continue(&self, err: &io::Error) -> bool {
         trace!(
             "TCP connector - failed to connect to {:?} port: {} err: {:?}",
-            self.req.as_ref().unwrap().host(),
+            self.req.as_ref().map(|req| req.host()),
             self.port,
             err
         );
-        !(self.addrs.is_none() || self.addrs.as_ref().unwrap().is_empty())
+        if let Some(addrs) = &self.addrs {
+            !addrs.is_empty()
+        } else {
+            false
+        }
     }
 }
 
@@ -197,7 +201,8 @@ impl<T: Address> Future for TcpConnectorResponse<T> {
                             }
                         }
 
-                        let req = this.req.take().unwrap();
+                        let req =
+                            this.req.take().ok_or_else(|| ConnectError::InvalidInput)?;
                         trace!(
                             "TCP connector - successfully connected to connecting to {:?} - {:?}",
                             req.host(), sock.peer_addr()
@@ -214,8 +219,11 @@ impl<T: Address> Future for TcpConnectorResponse<T> {
             }
 
             // try to connect
-            let addr = this.addrs.as_mut().unwrap().pop_front().unwrap();
-            this.stream = Some(Box::pin(TcpStream::connect(addr)));
+            if let Some(addr) = this.addrs.as_mut().and_then(|addrs| addrs.pop_front()) {
+                this.stream = Some(Box::pin(TcpStream::connect(addr)));
+            } else {
+                return Poll::Ready(Err(ConnectError::InvalidInput));
+            }
         }
     }
 }
@@ -243,7 +251,7 @@ mod tests {
         let msg = Connect::new(format!("{}", server.addr())).set_addrs(vec![
             format!("127.0.0.1:{}", server.addr().port() - 1)
                 .parse()
-                .unwrap(),
+                .expect(""),
             server.addr(),
         ]);
         let result = crate::connect::connect(msg).await;

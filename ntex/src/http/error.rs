@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_into_response() {
-        let err: HttpError = StatusCode::from_u16(10000).err().unwrap().into();
+        let err: HttpError = StatusCode::from_u16(10000).err().expect("").into();
         let resp: Response = err.error_response();
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }

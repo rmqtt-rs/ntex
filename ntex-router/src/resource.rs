@@ -364,7 +364,19 @@ impl ResourceDef {
 
             // dynamic segment
             let (re_part, rem, tail) = Self::parse_segment(pattern, &mut elems);
-            let re = Regex::new(&re_part).unwrap();
+            let re = match Regex::new(&re_part) {
+                Ok(re) => re,
+                Err(e) => {
+                    log::error!("{:?}", e);
+                    return (
+                        Segments {
+                            tp: Vec::new(),
+                            slesh: false,
+                        },
+                        Vec::new(),
+                    );
+                }
+            };
             let names: Vec<_> = re
                 .capture_names()
                 .filter_map(|name| {
@@ -396,7 +408,19 @@ impl ResourceDef {
         if !pattern.is_empty() {
             // handle tail expression for static segment
             if let Some(stripped) = pattern.strip_suffix('*') {
-                let pattern = Regex::new(&format!("^{}(.+)", stripped)).unwrap();
+                let pattern = match Regex::new(&format!("^{}(.+)", stripped)) {
+                    Ok(re) => re,
+                    Err(e) => {
+                        log::error!("{:?}", e);
+                        return (
+                            Segments {
+                                tp: Vec::new(),
+                                slesh: false,
+                            },
+                            Vec::new(),
+                        );
+                    }
+                };
                 pelems.push(Segment::Dynamic {
                     pattern,
                     names: Vec::new(),
@@ -524,11 +548,11 @@ mod tests {
         let mut resource = Path::new("/user/profile");
         let tree = Tree::new(&re, 1);
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "profile");
+        assert_eq!(resource.get("id").expect(""), "profile");
 
         let mut resource = Path::new("/user/1245125");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "1245125");
+        assert_eq!(resource.get("id").expect(""), "1245125");
 
         let tree = Tree::new(&ResourceDef::new("/v{version}/resource/{id}"), 1);
         assert_eq!(tree.find(&mut Path::new("/v1/resource/320120")), Some(1));
@@ -538,8 +562,8 @@ mod tests {
 
         let mut resource = Path::new("/v151/resource/adahg32");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("version").unwrap(), "151");
-        assert_eq!(resource.get("id").unwrap(), "adahg32");
+        assert_eq!(resource.get("version").expect(""), "151");
+        assert_eq!(resource.get("id").expect(""), "adahg32");
 
         let re = ResourceDef::new("/{id:[[:digit:]]{6}}");
         let tree = Tree::new(&re, 1);
@@ -552,17 +576,17 @@ mod tests {
 
         let mut resource = Path::new("/012345");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "012345");
+        assert_eq!(resource.get("id").expect(""), "012345");
 
         let re =
             ResourceDef::new("/u/test/v{version}-no-{minor}xx/resource/{id}/{name}");
         let tree = Tree::new(&re, 1);
         let mut resource = Path::new("/u/test/v1-no-3xx/resource/320120/name");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("version").unwrap(), "1");
-        assert_eq!(resource.get("minor").unwrap(), "3");
-        assert_eq!(resource.get("id").unwrap(), "320120");
-        assert_eq!(resource.get("name").unwrap(), "name");
+        assert_eq!(resource.get("version").expect(""), "1");
+        assert_eq!(resource.get("minor").expect(""), "3");
+        assert_eq!(resource.get("id").expect(""), "320120");
+        assert_eq!(resource.get("name").expect(""), "name");
     }
 
     #[test]
@@ -580,11 +604,11 @@ mod tests {
 
         let mut resource = Path::new("/user/profile");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "profile");
+        assert_eq!(resource.get("id").expect(""), "profile");
 
         let mut resource = Path::new("/user/1245125");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "1245125");
+        assert_eq!(resource.get("id").expect(""), "1245125");
 
         assert_eq!(tree.find(&mut Path::new("/v1/resource/320120")), Some(1));
         assert_eq!(tree.find(&mut Path::new("/v/resource/1")), None);
@@ -592,8 +616,8 @@ mod tests {
 
         let mut resource = Path::new("/v151/resource/adahg32");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("version").unwrap(), "151");
-        assert_eq!(resource.get("id").unwrap(), "adahg32");
+        assert_eq!(resource.get("version").expect(""), "151");
+        assert_eq!(resource.get("id").expect(""), "adahg32");
 
         assert_eq!(tree.find(&mut Path::new("/012345")), Some(1));
         assert_eq!(tree.find(&mut Path::new("/012")), None);
@@ -602,7 +626,7 @@ mod tests {
 
         let mut resource = Path::new("/012345");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "012345");
+        assert_eq!(resource.get("id").expect(""), "012345");
 
         let re = ResourceDef::new([
             "/user/{id}",
@@ -634,34 +658,34 @@ mod tests {
         use std::convert::TryFrom;
 
         let tree = Tree::new(&ResourceDef::new("/user/{id}/test"), 1);
-        let uri = Uri::try_from("/user/2345/test").unwrap();
+        let uri = Uri::try_from("/user/2345/test").expect("");
         let mut resource = Path::new(uri);
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "2345");
+        assert_eq!(resource.get("id").expect(""), "2345");
 
-        let uri = Uri::try_from("/user/qwe%25/test").unwrap();
+        let uri = Uri::try_from("/user/qwe%25/test").expect("");
         let mut resource = Path::new(uri);
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "qwe%");
+        assert_eq!(resource.get("id").expect(""), "qwe%");
 
-        let uri = Uri::try_from("/user/qwe%25rty/test").unwrap();
+        let uri = Uri::try_from("/user/qwe%25rty/test").expect("");
         let mut resource = Path::new(uri);
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "qwe%rty");
+        assert_eq!(resource.get("id").expect(""), "qwe%rty");
 
-        let uri = Uri::try_from("/user/foo-%2f-%252f-bar/test").unwrap();
+        let uri = Uri::try_from("/user/foo-%2f-%252f-bar/test").expect("");
         let mut resource = Path::new(uri);
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "foo-/-%2f-bar");
+        assert_eq!(resource.get("id").expect(""), "foo-/-%2f-bar");
 
         let uri = Uri::try_from(
             "/user/http%3A%2F%2Flocalhost%3A80%2Ffile%2F%2Fvar%2Flog%2Fsyslog/test",
         )
-        .unwrap();
+        .expect("");
         let mut resource = Path::new(uri);
         assert_eq!(tree.find(&mut resource), Some(1));
         assert_eq!(
-            resource.get("id").unwrap(),
+            resource.get("id").expect(""),
             "http://localhost:80/file//var/log/syslog"
         );
     }
@@ -676,10 +700,10 @@ mod tests {
 
         macro_rules! test_single_value {
             ($value:expr, $expected:expr) => {{
-                let uri = Uri::try_from($value).unwrap();
+                let uri = Uri::try_from($value).expect("");
                 let mut resource = Path::new(uri);
                 assert_eq!(tree.find(&mut resource), Some(1));
-                assert_eq!(resource.get("id").unwrap(), $expected);
+                assert_eq!(resource.get("id").expect(""), $expected);
             }};
         }
 
@@ -718,7 +742,7 @@ mod tests {
         assert_eq!(seg, Segment::Static("s".to_string()));
 
         let seg2 = Segment::Dynamic {
-            pattern: Regex::new("test").unwrap(),
+            pattern: Regex::new("test").expect(""),
             names: Vec::new(),
             len: 1,
             tail: false,
@@ -734,19 +758,19 @@ mod tests {
 
         let mut resource = Path::new("/user/-profile");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "profile");
+        assert_eq!(resource.get("id").expect(""), "profile");
 
         let mut resource = Path::new("/user/-2345");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "2345");
+        assert_eq!(resource.get("id").expect(""), "2345");
 
         let mut resource = Path::new("/user/-2345/");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "2345/");
+        assert_eq!(resource.get("id").expect(""), "2345/");
 
         let mut resource = Path::new("/user/-2345/sdg");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "2345/sdg");
+        assert_eq!(resource.get("id").expect(""), "2345/sdg");
     }
 
     #[test]
@@ -1033,8 +1057,8 @@ mod tests {
 
         let mut resource = Path::new("v151/resource/adahg32/test");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("version").unwrap(), "151");
-        assert_eq!(resource.get("id").unwrap(), "adahg32");
+        assert_eq!(resource.get("version").expect(""), "151");
+        assert_eq!(resource.get("id").expect(""), "adahg32");
 
         let re = ResourceDef::new("v/{id:[[:digit:]]{6}}");
         let tree = Tree::new(&re, 1);
@@ -1047,16 +1071,16 @@ mod tests {
 
         let mut resource = Path::new("v/012345");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("id").unwrap(), "012345");
+        assert_eq!(resource.get("id").expect(""), "012345");
 
         let re = ResourceDef::new("u/test/v{version}-no-{minor}xx/resource/{id}/{name}");
         let tree = Tree::new(&re, 1);
         let mut resource = Path::new("u/test/v1-no-3xx/resource/320120/name");
         assert_eq!(tree.find(&mut resource), Some(1));
-        assert_eq!(resource.get("version").unwrap(), "1");
-        assert_eq!(resource.get("minor").unwrap(), "3");
-        assert_eq!(resource.get("id").unwrap(), "320120");
-        assert_eq!(resource.get("name").unwrap(), "name");
+        assert_eq!(resource.get("version").expect(""), "1");
+        assert_eq!(resource.get("minor").expect(""), "3");
+        assert_eq!(resource.get("id").expect(""), "320120");
+        assert_eq!(resource.get("name").expect(""), "name");
     }
 
     #[test]

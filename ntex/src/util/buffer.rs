@@ -332,7 +332,7 @@ mod tests {
             fn_factory(|| async { Ok(TestService(inner.clone())) }),
         );
 
-        let srv = srv.new_service(&()).await.unwrap();
+        let srv = srv.new_service(&()).await.expect("");
         assert_eq!(lazy(|cx| srv.poll_ready(cx)).await, Poll::Ready(Ok(())));
 
         let fut1 = srv.call(());

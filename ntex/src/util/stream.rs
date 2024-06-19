@@ -78,26 +78,30 @@ where
             return Poll::Ready(());
         }
 
+        let sink = if let Some(sink) = this.sink.as_mut() {
+            sink
+        } else {
+            log::warn!("unreachable!(), sink is None");
+            return Poll::Ready(());
+        };
+
         loop {
-            match Pin::new(this.sink.as_mut().unwrap()).poll_ready(cx) {
-                Poll::Pending => {
-                    match Pin::new(this.sink.as_mut().unwrap()).poll_flush(cx) {
-                        Poll::Pending => break,
-                        Poll::Ready(Ok(_)) => (),
-                        Poll::Ready(Err(e)) => {
-                            trace!("Sink flush failed: {:?}", e);
-                            *this.shutdown = Some(true);
-                            return self.poll(cx);
-                        }
+            match Pin::new(&mut *sink).poll_ready(cx) {
+                Poll::Pending => match Pin::new(&mut *sink).poll_flush(cx) {
+                    Poll::Pending => break,
+                    Poll::Ready(Ok(_)) => (),
+                    Poll::Ready(Err(e)) => {
+                        trace!("Sink flush failed: {:?}", e);
+                        *this.shutdown = Some(true);
+                        return self.poll(cx);
                     }
-                }
+                },
                 Poll::Ready(Ok(_)) => {
                     if let Poll::Ready(Some(item)) = Pin::new(&mut this.rx).poll_next(cx)
                     {
                         match item {
                             Ok(Some(item)) => {
-                                if let Err(e) = Pin::new(this.sink.as_mut().unwrap())
-                                    .start_send(Ok(item))
+                                if let Err(e) = Pin::new(&mut *sink).start_send(Ok(item))
                                 {
                                     trace!("Failed to write to sink: {:?}", e);
                                     *this.shutdown = Some(true);
@@ -108,8 +112,7 @@ where
                             Ok(None) => continue,
                             Err(e) => {
                                 trace!("Stream is failed: {:?}", e);
-                                let _ = Pin::new(this.sink.as_mut().unwrap())
-                                    .start_send(Err(e));
+                                let _ = Pin::new(&mut *sink).start_send(Err(e));
                                 *this.shutdown = Some(true);
                                 return self.poll(cx);
                             }
@@ -197,10 +200,10 @@ mod tests {
         let codec = ws::Codec::new().client_mode();
         codec
             .encode(ws::Message::Text(ByteString::from_static("test")), &mut buf)
-            .unwrap();
-        tx.send(Ok::<_, ()>(buf.split().freeze())).unwrap();
+            .expect("");
+        tx.send(Ok::<_, ()>(buf.split().freeze())).expect("");
 
-        let data = next(&mut rx).await.unwrap().unwrap();
+        let data = next(&mut rx).await.expect("").expect("");
         assert_eq!(data, b"\x81\x04test".as_ref());
 
         drop(tx);

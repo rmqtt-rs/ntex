@@ -105,7 +105,7 @@ where
         match this.state.as_mut().project() {
             StateProject::A { fut, b } => match fut.poll(cx)? {
                 Poll::Ready(res) => {
-                    let b = b.take().unwrap();
+                    let b = b.take().ok_or_else(|| unreachable!())?;
                     this.state.set(State::Empty); // drop fut A
                     let fut = b.as_ref().1.call(res);
                     this.state.set(State::B { fut });
@@ -256,11 +256,8 @@ where
                 *this.b = Some(service);
             }
         }
-        if this.a.is_some() && this.b.is_some() {
-            Poll::Ready(Ok(AndThenService::new(
-                this.a.take().unwrap(),
-                this.b.take().unwrap(),
-            )))
+        if let (Some(a_value), Some(b_value)) = (this.a.take(), this.b.take()) {
+            Poll::Ready(Ok(AndThenService::new(a_value, b_value)))
         } else {
             Poll::Pending
         }
@@ -331,7 +328,7 @@ mod tests {
         let srv = pipeline(Srv1(cnt.clone())).and_then(Srv2(cnt));
         let res = srv.call("srv1").await;
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), ("srv1", "srv2"));
+        assert_eq!(res.expect(""), ("srv1", "srv2"));
     }
 
     #[ntex::test]
@@ -344,9 +341,9 @@ mod tests {
         .and_then(move || Ready::from(Ok(Srv2(cnt.clone()))))
         .clone();
 
-        let srv = new_srv.new_service(()).await.unwrap();
+        let srv = new_srv.new_service(()).await.expect("");
         let res = srv.call("srv1").await;
         assert!(res.is_ok());
-        assert_eq!(res.unwrap(), ("srv1", "srv2"));
+        assert_eq!(res.expect(""), ("srv1", "srv2"));
     }
 }

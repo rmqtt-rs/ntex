@@ -209,7 +209,9 @@ where
         if self.data.is_none() {
             self.data = Some(Extensions::new());
         }
-        self.data.as_mut().unwrap().insert(data);
+        if let Some(ref mut extensions) = self.data {
+            extensions.insert(data);
+        }
         self
     }
 
@@ -570,7 +572,11 @@ impl<Err: ErrorRenderer> ServiceFactory for ResourceEndpoint<Err> {
     type Future = Pin<Box<dyn Future<Output = Result<Self::Service, Self::InitError>>>>;
 
     fn new_service(&self, _: ()) -> Self::Future {
-        self.factory.borrow_mut().as_mut().unwrap().new_service(())
+        if let Some(f) = self.factory.borrow_mut().as_mut() {
+            f.new_service(())
+        } else {
+            Box::pin(async { Err(()) })
+        }
     }
 }
 

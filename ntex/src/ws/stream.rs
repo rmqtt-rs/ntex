@@ -184,18 +184,18 @@ mod tests {
         let codec = Codec::new().client_mode();
         codec
             .encode(Message::Text(ByteString::from_static("test1")), &mut buf)
-            .unwrap();
+            .expect("");
         codec
             .encode(Message::Text(ByteString::from_static("test2")), &mut buf)
-            .unwrap();
+            .expect("");
 
-        tx.send(Ok::<_, ()>(buf.split().freeze())).unwrap();
-        let frame = next(&mut decoder).await.unwrap().unwrap();
+        tx.send(Ok::<_, ()>(buf.split().freeze())).expect("");
+        let frame = next(&mut decoder).await.expect("").expect("");
         match frame {
             Frame::Text(data) => assert_eq!(data, b"test1"[..]),
             _ => panic!(),
         }
-        let frame = next(&mut decoder).await.unwrap().unwrap();
+        let frame = next(&mut decoder).await.expect("").expect("");
         match frame {
             Frame::Text(data) => assert_eq!(data, b"test2"[..]),
             _ => panic!(),
@@ -212,15 +212,15 @@ mod tests {
             Ok::<_, ()>(Message::Text(ByteString::from_static("test"))),
         )
         .await
-        .unwrap();
+        .expect("");
         poll_fn(|cx| Pin::new(&mut encoder).poll_flush(cx))
             .await
-            .unwrap();
+            .expect("");
         poll_fn(|cx| Pin::new(&mut encoder).poll_close(cx))
             .await
-            .unwrap();
+            .expect("");
 
-        let data = next(&mut rx).await.unwrap().unwrap();
+        let data = next(&mut rx).await.expect("").expect("");
         assert_eq!(data, b"\x81\x04test".as_ref());
         assert!(next(&mut rx).await.is_none());
     }

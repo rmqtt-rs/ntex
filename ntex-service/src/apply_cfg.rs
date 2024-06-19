@@ -214,7 +214,10 @@ where
             },
             StateProject::B { srv } => match srv.poll_ready(cx)? {
                 Poll::Ready(_) => {
-                    let fut = (this.store.as_ref().1)(this.cfg.take().unwrap(), srv);
+                    let fut = (this.store.as_ref().1)(
+                        this.cfg.take().ok_or_else(|| unreachable!())?,
+                        srv,
+                    );
                     this.state.set(State::C { fut });
                     self.poll(cx)
                 }
@@ -246,7 +249,7 @@ mod tests {
                 let item = item2.clone();
 
                 async move {
-                    item.set(fut.await.unwrap());
+                    item.set(fut.await.expect(""));
                     Ok::<_, ()>(fn_service(|id: usize| Ready::<_, ()>::Ok(id * 2)))
                 }
             },
@@ -254,9 +257,9 @@ mod tests {
         .clone()
         .new_service(())
         .await
-        .unwrap();
+        .expect("");
 
-        assert_eq!(srv.call(10usize).await.unwrap(), 20);
+        assert_eq!(srv.call(10usize).await.expect(""), 20);
         assert_eq!(item.get(), 11);
     }
 
@@ -273,7 +276,7 @@ mod tests {
                 let item = item2.clone();
 
                 async move {
-                    item.set(fut.await.unwrap());
+                    item.set(fut.await.expect(""));
                     Ok::<_, ()>(fn_service(|id: usize| Ready::<_, ()>::Ok(id * 2)))
                 }
             },
@@ -281,9 +284,9 @@ mod tests {
         .clone()
         .new_service(())
         .await
-        .unwrap();
+        .expect("");
 
-        assert_eq!(srv.call(10usize).await.unwrap(), 20);
+        assert_eq!(srv.call(10usize).await.expect(""), 20);
         assert_eq!(item.get(), 11);
     }
 }

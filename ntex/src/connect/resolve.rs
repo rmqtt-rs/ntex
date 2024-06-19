@@ -142,7 +142,7 @@ mod tests {
     async fn resolver() {
         let resolver = Resolver::new();
         assert!(format!("{:?}", resolver).contains("Resolver"));
-        let srv = resolver.new_service(()).await.unwrap();
+        let srv = resolver.new_service(()).await.expect("");
         assert!(lazy(|cx| srv.poll_ready(cx)).await.is_ready());
 
         let res = srv.call(Connect::new("www.rust-lang.org")).await;
@@ -151,11 +151,11 @@ mod tests {
         let res = srv.call(Connect::new("---11213")).await;
         assert!(res.is_err());
 
-        let addr: net::SocketAddr = "127.0.0.1:8080".parse().unwrap();
+        let addr: net::SocketAddr = "127.0.0.1:8080".parse().expect("");
         let res = srv
             .call(Connect::new("www.rust-lang.org").set_addrs(vec![addr]))
             .await
-            .unwrap();
+            .expect("");
         let addrs: Vec<_> = res.addrs().collect();
         assert_eq!(addrs.len(), 1);
         assert!(addrs.contains(&addr));

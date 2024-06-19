@@ -19,7 +19,7 @@ pub(super) fn requote(val: &[u8]) -> Option<String> {
                     let mut c = Vec::with_capacity(len);
                     c.extend_from_slice(&val[..idx - 2]);
                     cloned = Some(c);
-                    cloned.as_mut().unwrap()
+                    cloned.as_mut().expect("unreachable!")
                 };
 
                 if let Some(ch) = restore_ch(pct[1], pct[2]) {

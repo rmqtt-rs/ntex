@@ -156,7 +156,7 @@ mod tests {
         );
         let _ = factory.clone();
 
-        let service = factory.new_service(()).await.unwrap();
+        let service = factory.new_service(()).await.expect("");
 
         assert_eq!(service.call(1usize).await, Ok(1usize));
         assert!(lazy(|cx| service.poll_ready(cx)).await.is_ready());

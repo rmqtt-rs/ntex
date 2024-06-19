@@ -49,7 +49,11 @@ impl<Err> WebRequest<Err> {
 
     /// Deconstruct request into parts
     pub fn into_parts(mut self) -> (HttpRequest, Payload) {
-        let pl = Rc::get_mut(&mut (self.req).0).unwrap().payload.take();
+        let pl = if let Some(payload) = Rc::get_mut(&mut (self.req).0) {
+            payload.payload.take()
+        } else {
+            Payload::default()
+        };
         (self.req, pl)
     }
 
@@ -61,8 +65,12 @@ impl<Err> WebRequest<Err> {
         pl: Payload,
     ) -> Result<Self, (HttpRequest, Payload)> {
         if Rc::strong_count(&req.0) == 1 {
-            Rc::get_mut(&mut req.0).unwrap().payload = pl;
-            Ok(WebRequest::new(req))
+            if let Some(inner) = Rc::get_mut(&mut req.0) {
+                inner.payload = pl;
+                Ok(WebRequest::new(req))
+            } else {
+                Err((req, pl))
+            }
         } else {
             Err((req, pl))
         }
@@ -205,19 +213,31 @@ impl<Err> WebRequest<Err> {
     #[inline]
     /// Get request's payload
     pub fn take_payload(&mut self) -> Payload {
-        Rc::get_mut(&mut (self.req).0).unwrap().payload.take()
+        if let Some(inner) = Rc::get_mut(&mut (self.req).0) {
+            inner.payload.take()
+        } else {
+            Payload::default()
+        }
     }
 
     #[inline]
     /// Set request payload.
     pub fn set_payload(&mut self, payload: Payload) {
-        Rc::get_mut(&mut (self.req).0).unwrap().payload = payload;
+        if let Some(inner) = Rc::get_mut(&mut (self.req).0) {
+            inner.payload = payload;
+        } else {
+            log::error!("Failed to get mutable reference to set the payload");
+        }
     }
 
     #[doc(hidden)]
     /// Set new app data container
     pub fn set_data_container(&mut self, extensions: Rc<Extensions>) {
-        Rc::get_mut(&mut (self.req).0).unwrap().app_data = extensions;
+        if let Some(inner) = Rc::get_mut(&mut (self.req).0) {
+            inner.app_data = extensions;
+        } else {
+            log::error!("Failed to get mutable reference to set the data container");
+        }
     }
 
     /// Request extensions
@@ -322,7 +342,7 @@ mod tests {
         assert!(!req.message_headers().contains_key(header::CONTENT_TYPE));
 
         req.extensions_mut().insert("TEXT".to_string());
-        assert_eq!(req.message_extensions().get::<String>().unwrap(), "TEXT");
+        assert_eq!(req.message_extensions().get::<String>().expect(""), "TEXT");
         req.message_extensions_mut().remove::<String>();
         assert!(!req.extensions().contains::<String>());
     }

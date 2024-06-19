@@ -154,11 +154,26 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Future for AcceptorServiceResponse<T> {
             None => (),
         }
 
-        let io = this.io.as_mut().unwrap();
-        match Pin::new(io).poll_accept(cx) {
-            Poll::Ready(Ok(_)) => Poll::Ready(Ok(this.io.take().unwrap())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(Box::new(e))),
-            Poll::Pending => Poll::Pending,
+        if let Some(io) = this.io.as_mut() {
+            match Pin::new(io).poll_accept(cx) {
+                Poll::Ready(Ok(_)) => {
+                    if let Some(io_taken) = this.io.take() {
+                        Poll::Ready(Ok(io_taken))
+                    } else {
+                        Poll::Ready(Err(Box::new(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "io is None",
+                        ))))
+                    }
+                }
+                Poll::Ready(Err(e)) => Poll::Ready(Err(Box::new(e))),
+                Poll::Pending => Poll::Pending,
+            }
+        } else {
+            Poll::Ready(Err(Box::new(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "io is None",
+            ))))
         }
     }
 }

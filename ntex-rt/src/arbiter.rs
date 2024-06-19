@@ -182,36 +182,34 @@ impl Arbiter {
     /// Get a reference to a type previously inserted on this arbiter's storage.
     ///
     /// Panics is item is not inserted
-    pub fn get_item<T: 'static, F, R>(mut f: F) -> R
+    pub fn get_item<T: 'static, F, R>(mut f: F) -> Option<R>
     where
         F: FnMut(&T) -> R,
     {
-        STORAGE.with(move |cell| {
+        STORAGE.with(|cell| {
             let st = cell.borrow();
-            let item = st
-                .get(&TypeId::of::<T>())
-                .and_then(|boxed| (&**boxed as &(dyn Any + 'static)).downcast_ref())
-                .unwrap();
-            f(item)
+            st.get(&TypeId::of::<T>()).and_then(|boxed| {
+                (&**boxed as &(dyn Any + 'static))
+                    .downcast_ref()
+                    .map(|x| f(x))
+            })
         })
     }
 
     /// Get a mutable reference to a type previously inserted on this arbiter's storage.
     ///
     /// Panics is item is not inserted
-    pub fn get_mut_item<T: 'static, F, R>(mut f: F) -> R
+    pub fn get_mut_item<T: 'static, F, R>(mut f: F) -> Option<R>
     where
         F: FnMut(&mut T) -> R,
     {
         STORAGE.with(move |cell| {
             let mut st = cell.borrow_mut();
-            let item = st
-                .get_mut(&TypeId::of::<T>())
+            st.get_mut(&TypeId::of::<T>())
                 .and_then(|boxed| {
                     (&mut **boxed as &mut (dyn Any + 'static)).downcast_mut()
                 })
-                .unwrap();
-            f(item)
+                .map(|x| f(x))
         })
     }
 

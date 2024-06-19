@@ -56,13 +56,13 @@ impl AcceptLoop {
         // Create a poll instance
         let poll = mio::Poll::new()
             .map_err(|e| panic!("Cannot create mio::Poll {}", e))
-            .unwrap();
+            .expect("");
 
         let (tx, rx) = sync_mpsc::channel();
         let waker = Arc::new(
             mio::Waker::new(poll.registry(), NOTIFY)
                 .map_err(|e| panic!("Cannot create mio::Waker {}", e))
-                .unwrap(),
+                .expect(""),
         );
         let notify = AcceptNotify::new(waker, tx);
 
@@ -149,7 +149,7 @@ impl Accept {
         // Start accept
         let mut sockets = Slab::new();
         for (hnd_token, mut lst) in socks.into_iter() {
-            let addr = lst.local_addr();
+            let addr = lst.local_addr().expect("Illegal IP address");
             let entry = sockets.vacant_entry();
             let token = entry.key();
 

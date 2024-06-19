@@ -142,7 +142,7 @@ impl<T, U> RouterBuilder<T, U> {
     ) -> &mut (ResourceDef, T, Option<U>) {
         self.resources
             .push((ResourceDef::new(path), resource, None));
-        self.resources.last_mut().unwrap()
+        self.resources.last_mut().expect("unreachable!")
     }
 
     /// Register resource for specified path prefix.
@@ -153,7 +153,7 @@ impl<T, U> RouterBuilder<T, U> {
     ) -> &mut (ResourceDef, T, Option<U>) {
         self.resources
             .push((ResourceDef::prefix(prefix), resource, None));
-        self.resources.last_mut().unwrap()
+        self.resources.last_mut().expect("unreachable!")
     }
 
     /// Register resource for ResourceDef
@@ -163,7 +163,7 @@ impl<T, U> RouterBuilder<T, U> {
         resource: T,
     ) -> &mut (ResourceDef, T, Option<U>) {
         self.resources.push((rdef, resource, None));
-        self.resources.last_mut().unwrap()
+        self.resources.last_mut().expect("unreachable!")
     }
 
     /// Finish configuration and create router instance.
@@ -212,67 +212,67 @@ mod tests {
         assert!(router.recognize(&mut path).is_none());
 
         let mut path = Path::new("/name");
-        let (h, info) = router.recognize_mut(&mut path).unwrap();
+        let (h, info) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 10);
         assert_eq!(info, ResourceId(0));
         assert!(path.is_empty());
 
         let mut path = Path::new("/name");
-        let (h, info) = router.recognize(&mut path).unwrap();
+        let (h, info) = router.recognize(&mut path).expect("");
         assert_eq!(*h, 10);
         assert_eq!(info, ResourceId(0));
         assert!(path.is_empty());
 
         let mut path = Path::new("/name/value");
-        let (h, info) = router.recognize_mut(&mut path).unwrap();
+        let (h, info) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 11);
         assert_eq!(info, ResourceId(1));
-        assert_eq!(path.get("val").unwrap(), "value");
+        assert_eq!(path.get("val").expect(""), "value");
         assert_eq!(&path["val"], "value");
 
         let mut path = Path::new("/name/value2/index.html");
-        let (h, info) = router.recognize_mut(&mut path).unwrap();
+        let (h, info) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 12);
         assert_eq!(info, ResourceId(2));
-        assert_eq!(path.get("val").unwrap(), "value2");
+        assert_eq!(path.get("val").expect(""), "value2");
 
         let mut path = Path::new("/file/file.gz");
-        let (h, info) = router.recognize_mut(&mut path).unwrap();
+        let (h, info) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 13);
         assert_eq!(info, ResourceId(3));
-        assert_eq!(path.get("file").unwrap(), "file");
-        assert_eq!(path.get("ext").unwrap(), "gz");
+        assert_eq!(path.get("file").expect(""), "file");
+        assert_eq!(path.get("ext").expect(""), "gz");
 
         let mut path = Path::new("/vtest/ttt/index.html");
-        let (h, info) = router.recognize_mut(&mut path).unwrap();
+        let (h, info) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 14);
         assert_eq!(info, ResourceId(4));
-        assert_eq!(path.get("val").unwrap(), "test");
-        assert_eq!(path.get("val2").unwrap(), "ttt");
+        assert_eq!(path.get("val").expect(""), "test");
+        assert_eq!(path.get("val2").expect(""), "ttt");
 
         let mut path = Path::new("/v/blah-blah/index.html");
-        let (h, info) = router.recognize_mut(&mut path).unwrap();
+        let (h, info) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 15);
         assert_eq!(info, ResourceId(5));
-        assert_eq!(path.get("tail").unwrap(), "blah-blah/index.html");
+        assert_eq!(path.get("tail").expect(""), "blah-blah/index.html");
 
         let mut path = Path::new("/test2/index.html");
-        let (h, info) = router.recognize_mut(&mut path).unwrap();
+        let (h, info) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 16);
         assert_eq!(info, ResourceId(6));
-        assert_eq!(path.get("test").unwrap(), "index");
+        assert_eq!(path.get("test").expect(""), "index");
 
         let mut path = Path::new("/bbb/index.html");
-        let (h, info) = router.recognize_mut(&mut path).unwrap();
+        let (h, info) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 17);
         assert_eq!(info, ResourceId(7));
-        assert_eq!(path.get("test").unwrap(), "bbb");
+        assert_eq!(path.get("test").expect(""), "bbb");
 
         let mut path = Path::new("/v2/blah-blah/test.html");
-        let (h, info) = router.recognize_mut(&mut path).unwrap();
+        let (h, info) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 18);
         assert_eq!(info, ResourceId(8));
-        assert_eq!(path.get("custom").unwrap(), "blah-blah");
+        assert_eq!(path.get("custom").expect(""), "blah-blah");
     }
 
     #[test]
@@ -283,11 +283,11 @@ mod tests {
         let mut router = router.finish();
 
         let mut path = Path::new("/index.json");
-        let (h, _) = router.recognize_mut(&mut path).unwrap();
+        let (h, _) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 10);
 
         let mut path = Path::new("/test.json");
-        let (h, _) = router.recognize_mut(&mut path).unwrap();
+        let (h, _) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 11);
     }
 
@@ -300,11 +300,11 @@ mod tests {
         let mut router = router.finish();
 
         let mut path = Path::new("/index.json");
-        let (h, _) = router.recognize_mut(&mut path).unwrap();
+        let (h, _) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 10);
 
         let mut path = Path::new("/indeX.json");
-        let (h, _) = router.recognize_mut(&mut path).unwrap();
+        let (h, _) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 10);
 
         let mut path = Path::new("/test.jsoN");
@@ -324,15 +324,15 @@ mod tests {
 
         let mut path = Path::new("/test/name");
         path.skip(5);
-        let (h, _) = router.recognize_mut(&mut path).unwrap();
+        let (h, _) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 10);
 
         let mut path = Path::new("/test/name/value");
         path.skip(5);
-        let (h, id) = router.recognize_mut(&mut path).unwrap();
+        let (h, id) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 11);
         assert_eq!(id, ResourceId(1));
-        assert_eq!(path.get("val").unwrap(), "value");
+        assert_eq!(path.get("val").expect(""), "value");
         assert_eq!(&path["val"], "value");
 
         // same patterns
@@ -347,7 +347,7 @@ mod tests {
 
         let mut path = Path::new("/test2/name");
         path.skip(6);
-        let (h, _) = router.recognize_mut(&mut path).unwrap();
+        let (h, _) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 10);
 
         let mut path = Path::new("/test2/name-test");
@@ -356,7 +356,7 @@ mod tests {
 
         let mut path = Path::new("/test2/name/ttt");
         path.skip(6);
-        let (h, _) = router.recognize_mut(&mut path).unwrap();
+        let (h, _) = router.recognize_mut(&mut path).expect("");
         assert_eq!(*h, 11);
         assert_eq!(&path["val"], "ttt");
     }
@@ -373,7 +373,7 @@ mod tests {
         assert_eq!(
             *router
                 .recognize_checked(&mut p, |_, v| v == Some(&0))
-                .unwrap()
+                .expect("")
                 .0,
             10
         );
@@ -381,7 +381,7 @@ mod tests {
         assert_eq!(
             *router
                 .recognize_checked(&mut p, |_, v| v == Some(&1))
-                .unwrap()
+                .expect("")
                 .0,
             11
         );
@@ -389,7 +389,7 @@ mod tests {
         assert_eq!(
             *router
                 .recognize_checked(&mut p, |_, v| v == Some(&2))
-                .unwrap()
+                .expect("")
                 .0,
             12
         );
@@ -397,7 +397,7 @@ mod tests {
         assert_eq!(
             *router
                 .recognize_mut_checked(&mut p, |_, v| v == Some(&0))
-                .unwrap()
+                .expect("")
                 .0,
             10
         );
@@ -405,7 +405,7 @@ mod tests {
         assert_eq!(
             *router
                 .recognize_mut_checked(&mut p, |_, v| v == Some(&1))
-                .unwrap()
+                .expect("")
                 .0,
             11
         );
@@ -413,7 +413,7 @@ mod tests {
         assert_eq!(
             *router
                 .recognize_mut_checked(&mut p, |_, v| v == Some(&2))
-                .unwrap()
+                .expect("")
                 .0,
             12
         );
@@ -432,7 +432,7 @@ mod tests {
         assert_eq!(
             *router
                 .recognize_checked(&mut p, |_, v| v == Some(&0))
-                .unwrap()
+                .expect("")
                 .0,
             10
         );
@@ -440,7 +440,7 @@ mod tests {
         assert_eq!(
             *router
                 .recognize_checked(&mut p, |_, v| v == Some(&1))
-                .unwrap()
+                .expect("")
                 .0,
             11
         );
@@ -448,7 +448,7 @@ mod tests {
         assert_eq!(
             *router
                 .recognize_mut_checked(&mut p, |_, v| v == Some(&0))
-                .unwrap()
+                .expect("")
                 .0,
             10
         );
@@ -456,7 +456,7 @@ mod tests {
         assert_eq!(
             *router
                 .recognize_mut_checked(&mut p, |_, v| v == Some(&1))
-                .unwrap()
+                .expect("")
                 .0,
             11
         );

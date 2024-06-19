@@ -95,11 +95,16 @@ impl Args {
                 }
             }
         }
+
+        let path = path
+            .take()
+            .ok_or_else(|| syn::Error::new_spanned(path, "Path is None"))?;
+
         Ok(Args {
-            path: path.unwrap(),
+            path,
             guards,
             error: error
-                .unwrap_or_else(|| syn::parse_str("ntex::web::DefaultError").unwrap()),
+                .unwrap_or_else(|| syn::parse_str("ntex::web::DefaultError").expect("")),
         })
     }
 }

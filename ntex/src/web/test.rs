@@ -621,7 +621,7 @@ where
 
     // run server in separate thread
     thread::spawn(move || {
-        let mut sys = System::new("ntex-test-server");
+        let mut sys = System::new("ntex-test-server").unwrap();
 
         let cfg = cfg.clone();
         let factory = factory.clone();

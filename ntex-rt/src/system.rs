@@ -49,7 +49,7 @@ impl System {
     /// Create new system.
     ///
     /// This method panics if it can not create tokio runtime
-    pub fn new<T: Into<String>>(name: T) -> SystemRunner {
+    pub fn new<T: Into<String>>(name: T) -> io::Result<SystemRunner> {
         Self::build().name(name).finish()
     }
 

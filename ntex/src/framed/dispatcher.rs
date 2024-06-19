@@ -270,14 +270,20 @@ where
                     if this.fut.is_none() {
                         // optimize first service call
                         this.fut.set(Some(this.service.call(item)));
-                        match this.fut.as_mut().as_pin_mut().unwrap().poll(cx) {
-                            Poll::Ready(res) => {
-                                this.fut.set(None);
-                                slf.handle_result(res, write);
+                        if let Some(fut) = this.fut.as_mut().as_pin_mut() {
+                            match fut.poll(cx) {
+                                Poll::Ready(res) => {
+                                    this.fut.set(None);
+                                    slf.handle_result(res, write);
+                                }
+                                Poll::Pending => {
+                                    slf.shared
+                                        .inflight
+                                        .set(slf.shared.inflight.get() + 1);
+                                }
                             }
-                            Poll::Pending => {
-                                slf.shared.inflight.set(slf.shared.inflight.get() + 1)
-                            }
+                        } else {
+                            unreachable!()
                         }
                     } else {
                         slf.spawn_service_call(this.service.call(item));
@@ -306,14 +312,19 @@ where
                     if this.fut.is_none() {
                         // optimize first service call
                         this.fut.set(Some(this.service.call(item)));
-                        match this.fut.as_mut().as_pin_mut().unwrap().poll(cx) {
-                            Poll::Ready(res) => {
-                                this.fut.set(None);
-                                slf.handle_result(res, write);
+                        if let Some(fut) = this.fut.as_mut().as_pin_mut() {
+                            match fut.poll(cx) {
+                                Poll::Ready(res) => {
+                                    this.fut.set(None);
+                                    slf.handle_result(res, write);
+                                }
+                                Poll::Pending => slf
+                                    .shared
+                                    .inflight
+                                    .set(slf.shared.inflight.get() + 1),
                             }
-                            Poll::Pending => {
-                                slf.shared.inflight.set(slf.shared.inflight.get() + 1)
-                            }
+                        } else {
+                            unreachable!()
                         }
                     } else {
                         slf.spawn_service_call(this.service.call(item));
@@ -585,7 +596,7 @@ mod tests {
             let _ = disp.await;
         });
 
-        let buf = client.read().await.unwrap();
+        let buf = client.read().await.expect("");
         assert_eq!(buf, Bytes::from_static(b"GET /test HTTP/1\r\n\r\n"));
 
         client.close().await;
@@ -613,14 +624,14 @@ mod tests {
             let _ = disp.disconnect_timeout(25).await;
         });
 
-        let buf = client.read().await.unwrap();
+        let buf = client.read().await.expect("");
         assert_eq!(buf, Bytes::from_static(b"GET /test HTTP/1\r\n\r\n"));
 
         assert!(st
             .write()
             .encode(Bytes::from_static(b"test"), &mut BytesCodec)
             .is_ok());
-        let buf = client.read().await.unwrap();
+        let buf = client.read().await.expect("");
         assert_eq!(buf, Bytes::from_static(b"test"));
 
         st.close();
@@ -647,14 +658,14 @@ mod tests {
                 Bytes::from_static(b"GET /test HTTP/1\r\n\r\n"),
                 &mut BytesCodec,
             )
-            .unwrap();
+            .expect("");
         crate::rt::spawn(async move {
             let _ = disp.await;
         });
 
         // buffer should be flushed
         client.remote_buffer_cap(1024);
-        let buf = client.read().await.unwrap();
+        let buf = client.read().await.expect("");
         assert_eq!(buf, Bytes::from_static(b"GET /test HTTP/1\r\n\r\n"));
 
         // write side must be closed, dispatcher waiting for read side to close
@@ -683,7 +694,7 @@ mod tests {
                 async move {
                     match msg {
                         DispatchItem::Item(_) => {
-                            data.lock().unwrap().borrow_mut().push(0);
+                            data.lock().expect("").borrow_mut().push(0);
                             let bytes = rand::thread_rng()
                                 .sample_iter(&rand::distributions::Alphanumeric)
                                 .take(65_536)
@@ -692,10 +703,10 @@ mod tests {
                             return Ok::<_, ()>(Some(Bytes::from(bytes)));
                         }
                         DispatchItem::WBackPressureEnabled => {
-                            data.lock().unwrap().borrow_mut().push(1);
+                            data.lock().expect("").borrow_mut().push(1);
                         }
                         DispatchItem::WBackPressureDisabled => {
-                            data.lock().unwrap().borrow_mut().push(2);
+                            data.lock().expect("").borrow_mut().push(2);
                         }
                         _ => (),
                     }
@@ -730,7 +741,7 @@ mod tests {
 
         // backpressure disabled
         assert!(state.write().is_ready());
-        assert_eq!(&data.lock().unwrap().borrow()[..], &[0, 1, 2]);
+        assert_eq!(&data.lock().expect("").borrow()[..], &[0, 1, 2]);
     }
 
     #[crate::rt_test]
@@ -751,11 +762,11 @@ mod tests {
                 async move {
                     match msg {
                         DispatchItem::Item(bytes) => {
-                            data.lock().unwrap().borrow_mut().push(0);
+                            data.lock().expect("").borrow_mut().push(0);
                             return Ok::<_, ()>(Some(bytes.freeze()));
                         }
                         DispatchItem::KeepAliveTimeout => {
-                            data.lock().unwrap().borrow_mut().push(1);
+                            data.lock().expect("").borrow_mut().push(1);
                         }
                         _ => (),
                     }
@@ -769,7 +780,7 @@ mod tests {
 
         state.set_disconnect_timeout(1);
 
-        let buf = client.read().await.unwrap();
+        let buf = client.read().await.expect("");
         assert_eq!(buf, Bytes::from_static(b"GET /test HTTP/1\r\n\r\n"));
         sleep(Duration::from_millis(3100)).await;
 
@@ -779,6 +790,6 @@ mod tests {
         assert!(state.is_io_shutdown());
         assert!(flags.contains(crate::framed::state::Flags::IO_SHUTDOWN));
         assert!(client.is_closed());
-        assert_eq!(&data.lock().unwrap().borrow()[..], &[0, 1]);
+        assert_eq!(&data.lock().expect("").borrow()[..], &[0, 1]);
     }
 }

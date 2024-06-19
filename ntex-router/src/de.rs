@@ -545,25 +545,26 @@ mod tests {
             ("value", PathItem::Static("user1")),
         ];
 
-        let s: () = de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+        let s: () =
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(s, ());
 
         let s: MyStruct =
-            de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(s.key, "name");
         assert_eq!(s.value, "user1");
 
-        let s: MyStruct = path.load().unwrap();
+        let s: MyStruct = path.load().expect("");
         assert_eq!(s.key, "name");
         assert_eq!(s.value, "user1");
 
         let s: (String, String) =
-            de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(s.0, "name");
         assert_eq!(s.1, "user1");
 
         let s: &str =
-            de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(s, "name");
 
         let mut path = Path::new("/name/user1/");
@@ -573,18 +574,18 @@ mod tests {
         ];
 
         let s: Test1 =
-            de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(s.0, "name");
         assert_eq!(s.1, 32);
 
         #[derive(Deserialize)]
         struct T(Test1);
-        let s: T = de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+        let s: T = de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!((s.0).0, "name");
         assert_eq!((s.0).1, 32);
 
         let s: Test2 =
-            de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(s.key, "name");
         assert_eq!(s.value, 32);
 
@@ -593,12 +594,12 @@ mod tests {
         assert!(s.is_err());
 
         let s: (String, u8) =
-            de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(s.0, "name");
         assert_eq!(s.1, 32);
 
         let res: Vec<String> =
-            de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(res[0], "name".to_owned());
         assert_eq!(res[1], "32".to_owned());
 
@@ -621,11 +622,12 @@ mod tests {
     fn test_extract_path_single() {
         let mut path = Path::new("/name/user1/");
         path.segments = vec![("value", PathItem::Static("32"))];
-        let i: i8 = de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+        let i: i8 =
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(i, 32);
 
         let i: (i8,) =
-            de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(i, (32,));
 
         let i: Result<(i8, i8), _> =
@@ -635,7 +637,7 @@ mod tests {
         #[derive(Deserialize)]
         struct Test(i8);
         let i: Test =
-            de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(i.0, 32);
 
         path.segments.push(("value2", PathItem::Static("32")));
@@ -649,7 +651,7 @@ mod tests {
         let mut path = Path::new("/val1/");
         path.segments = vec![("val", PathItem::Static("val1"))];
         let i: TestEnum =
-            de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(i, TestEnum::Val1);
 
         let mut path = Path::new("/val1/");
@@ -658,7 +660,7 @@ mod tests {
             ("val2", PathItem::Static("val2")),
         ];
         let i: (TestEnum, TestEnum) =
-            de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(i, (TestEnum::Val1, TestEnum::Val2));
     }
 
@@ -667,7 +669,7 @@ mod tests {
         let mut path = Path::new("/val1/");
         path.segments = vec![("val", PathItem::Static("val1"))];
         let i: Test3 =
-            de::Deserialize::deserialize(PathDeserializer::new(&path)).unwrap();
+            de::Deserialize::deserialize(PathDeserializer::new(&path)).expect("");
         assert_eq!(i.val, TestEnum::Val1);
 
         let mut path = Path::new("/val3/");

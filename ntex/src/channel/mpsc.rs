@@ -239,12 +239,12 @@ mod tests {
         assert!(format!("{:?}", tx).contains("Sender"));
         assert!(format!("{:?}", rx).contains("Receiver"));
 
-        tx.send("test").unwrap();
-        assert_eq!(next(&mut rx).await.unwrap(), "test");
+        tx.send("test").expect("");
+        assert_eq!(next(&mut rx).await.expect(""), "test");
 
         let tx2 = tx.clone();
-        tx2.send("test2").unwrap();
-        assert_eq!(next(&mut rx).await.unwrap(), "test2");
+        tx2.send("test2").expect("");
+        assert_eq!(next(&mut rx).await.expect(""), "test2");
 
         assert_eq!(
             lazy(|cx| Pin::new(&mut rx).poll_next(cx)).await,
@@ -266,7 +266,7 @@ mod tests {
         assert!(weak_tx.upgrade().is_some());
 
         let (tx, rx) = channel();
-        tx.send("test").unwrap();
+        tx.send("test").expect("");
         drop(rx);
         assert!(tx.send("test").is_err());
 
@@ -292,7 +292,7 @@ mod tests {
             assert!(Pin::new(&mut tx).poll_close(cx).is_ready());
         })
         .await;
-        assert_eq!(next(&mut rx).await.unwrap(), "test");
+        assert_eq!(next(&mut rx).await.expect(""), "test");
         assert_eq!(next(&mut rx).await, None);
     }
 

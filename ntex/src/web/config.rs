@@ -50,7 +50,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         AppConfig::new(
             false,
-            "127.0.0.1:8080".parse().unwrap(),
+            "127.0.0.1:8080".parse().expect("Illegal IP address"),
             "localhost:8080".to_owned(),
         )
     }
@@ -150,7 +150,7 @@ mod tests {
         )
         .await;
         let req = TestRequest::default().to_request();
-        let resp = srv.call(req).await.unwrap();
+        let resp = srv.call(req).await.expect("");
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
@@ -169,7 +169,7 @@ mod tests {
                     web::get().to(|req: HttpRequest| async move {
                         HttpResponse::Ok().body(format!(
                             "{}",
-                            req.url_for("youtube", &["12345"]).unwrap()
+                            req.url_for("youtube", &["12345"]).expect("")
                         ))
                     }),
                 ),
