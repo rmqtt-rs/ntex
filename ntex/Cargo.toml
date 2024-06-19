@@ -1,6 +1,6 @@
 [package]
 name = "ntex"
-version = "0.3.21"
+version = "0.3.22"
 authors = ["ntex contributors <team@ntex.rs>"]
 description = "Framework for composable network services"
 readme = "README.md"
@@ -76,6 +76,7 @@ socket2 = "0.5"
 url-pkg = { version = "2.1", package = "url", optional = true }
 coo-kie = { version = "0.15", package = "cookie", optional = true }
 tokio = { version = "1", default-features = false, features = ["sync"] }
+parking_lot = "0.12"
 
 # openssl
 open-ssl = { version="0.10", package = "openssl", optional = true }
