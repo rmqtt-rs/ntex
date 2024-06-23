@@ -11,7 +11,7 @@ use super::runtime::Runtime;
 use super::system::System;
 
 thread_local!(
-    static ADDR: RefCell<Option<Arbiter>> = RefCell::new(None);
+    static ADDR: RefCell<Option<Arbiter>> = const { RefCell::new(None) };
     static STORAGE: RefCell<HashMap<TypeId, Box<dyn Any>>> =
         RefCell::new(HashMap::new());
 );
@@ -182,16 +182,14 @@ impl Arbiter {
     /// Get a reference to a type previously inserted on this arbiter's storage.
     ///
     /// Panics is item is not inserted
-    pub fn get_item<T: 'static, F, R>(mut f: F) -> Option<R>
+    pub fn get_item<T: 'static, F, R>(f: F) -> Option<R>
     where
         F: FnMut(&T) -> R,
     {
         STORAGE.with(|cell| {
             let st = cell.borrow();
             st.get(&TypeId::of::<T>()).and_then(|boxed| {
-                (&**boxed as &(dyn Any + 'static))
-                    .downcast_ref()
-                    .map(|x| f(x))
+                (&**boxed as &(dyn Any + 'static)).downcast_ref().map(f)
             })
         })
     }
@@ -199,7 +197,7 @@ impl Arbiter {
     /// Get a mutable reference to a type previously inserted on this arbiter's storage.
     ///
     /// Panics is item is not inserted
-    pub fn get_mut_item<T: 'static, F, R>(mut f: F) -> Option<R>
+    pub fn get_mut_item<T: 'static, F, R>(f: F) -> Option<R>
     where
         F: FnMut(&mut T) -> R,
     {
@@ -209,7 +207,7 @@ impl Arbiter {
                 .and_then(|boxed| {
                     (&mut **boxed as &mut (dyn Any + 'static)).downcast_mut()
                 })
-                .map(|x| f(x))
+                .map(f)
         })
     }
 

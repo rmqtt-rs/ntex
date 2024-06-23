@@ -15,6 +15,7 @@ use crate::http::response::Response;
 use super::{decoder, decoder::PayloadType, encoder, Message};
 
 bitflags! {
+    #[derive(Debug, Clone, Copy)]
     struct Flags: u8 {
         const HEAD              = 0b0000_0001;
         const STREAM            = 0b0000_0010;

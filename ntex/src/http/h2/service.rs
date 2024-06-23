@@ -47,7 +47,7 @@ where
         H2Service {
             on_connect: None,
             srv: service.into_factory(),
-            handshake_timeout: (cfg.0.ssl_handshake_timeout as u64) * 1000,
+            handshake_timeout: cfg.0.ssl_handshake_timeout * 1000,
             _t: PhantomData,
             cfg,
         }
@@ -166,7 +166,7 @@ mod rustls {
             InitError = S::InitError,
         > {
             let protos = vec!["h2".to_string().into()];
-            config.set_protocols(&protos);
+            config.alpn_protocols = protos;
 
             pipeline_factory(
                 Acceptor::new(config)
@@ -260,11 +260,7 @@ where
     fn call(&self, (io, addr): Self::Request) -> Self::Future {
         trace!("New http2 connection, peer address: {:?}", addr);
 
-        let on_connect = if let Some(ref on_connect) = self.on_connect {
-            Some(on_connect(&io))
-        } else {
-            None
-        };
+        let on_connect = self.on_connect.as_ref().map(|on_connect| on_connect(&io));
 
         H2ServiceHandlerResponse {
             state: State::Handshake(

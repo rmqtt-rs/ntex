@@ -9,18 +9,18 @@ repository = "https://github.com/ntex-rs/ntex.git"
 documentation = "https://docs.rs/ntex-util/"
 categories = ["network-programming", "asynchronous"]
 license = "MIT"
-edition = "2018"
+edition = "2021"
 
 [lib]
 name = "ntex_util"
 path = "src/lib.rs"
 
 [dependencies]
-bitflags = "1.2"
+bitflags = "2.5"
 slab = "0.4"
-futures-core = { version = "0.3.13", default-features = false, features = ["alloc"] }
-futures-sink = { version = "0.3.13", default-features = false, features = ["alloc"] }
-pin-project-lite = "0.2.6"
+futures-core = { version = "0.3", default-features = false, features = ["alloc"] }
+futures-sink = { version = "0.3", default-features = false, features = ["alloc"] }
+pin-project-lite = "0.2"
 
 [dev-dependencies]
-ntex = "0.3.14"
+ntex = "0.3.22"

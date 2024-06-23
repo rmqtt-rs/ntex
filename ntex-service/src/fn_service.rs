@@ -519,7 +519,7 @@ where
 
     #[inline]
     fn call(&self, req: Req) -> Self::Future {
-        (&mut *self.f.borrow_mut())(req)
+        (*self.f.borrow_mut())(req)
     }
 }
 

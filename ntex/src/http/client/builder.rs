@@ -3,6 +3,8 @@ use std::fmt;
 use std::rc::Rc;
 use std::time::Duration;
 
+use base64::{engine::general_purpose, Engine as _};
+
 use crate::http::error::HttpError;
 use crate::http::header::{self, HeaderMap, HeaderName, HeaderValue};
 use crate::Service;
@@ -124,7 +126,7 @@ impl ClientBuilder {
         };
         self.header(
             header::AUTHORIZATION,
-            format!("Basic {}", base64::encode(&auth)),
+            format!("Basic {}", general_purpose::STANDARD.encode(auth)),
         )
     }
 

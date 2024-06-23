@@ -64,7 +64,7 @@ where
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut this = self.as_mut().get_mut();
+        let this = self.as_mut().get_mut();
 
         // IO error occured
         if this.state.is_io_err() {
@@ -165,7 +165,7 @@ where
 
                     // disconnect timeout
                     if let Some(ref mut delay) = delay {
-                        if let Poll::Pending = Pin::new(delay).poll(cx) {
+                        if Pin::new(delay).poll(cx).is_pending() {
                             return Poll::Pending;
                         }
                     }

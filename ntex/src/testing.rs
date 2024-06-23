@@ -37,6 +37,7 @@ pub struct Io {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug)]
     struct Flags: u8 {
         const FLUSHED = 0b0000_0001;
         const CLOSED  = 0b0000_0010;
@@ -79,18 +80,13 @@ impl Default for Flags {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 enum IoState {
+    #[default]
     Ok,
     Pending,
     Close,
     Err(io::Error),
-}
-
-impl Default for IoState {
-    fn default() -> Self {
-        IoState::Ok
-    }
 }
 
 impl Io {

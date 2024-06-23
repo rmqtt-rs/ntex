@@ -231,7 +231,6 @@ macro_rules! variant_impl ({$mod_name:ident, $enum_type:ident, $srv_type:ident, 
         }
 
 
-        #[doc(hidden)]
         pin_project_lite::pin_project! {
             pub struct ServiceFactoryResponse<A: ServiceFactory, $($T: ServiceFactory),+> {
                 pub(super) a: Option<A::Service>,

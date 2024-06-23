@@ -7,7 +7,7 @@ keywords = ["ntex"]
 repository = "https://github.com/ntex-rs/ntex.git"
 documentation = "https://docs.rs/ntex-router/"
 license = "MIT"
-edition = "2018"
+edition = "2021"
 
 [lib]
 name = "ntex_router"
@@ -21,7 +21,7 @@ serde = "1.0"
 bytestring = "1.0"
 log = "0.4"
 http = { version = "0.2", optional = true }
-regex = { version = "1.4.5", default-features = false, features = ["std"] }
+regex = { version = "1.10", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 http = "0.2"

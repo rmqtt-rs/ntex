@@ -147,7 +147,7 @@ where
                     if let Some(b) = b.take() {
                         this.state.set(State::Empty);
                         let b = b.as_ref();
-                        let fut = (&b.2)(res, &b.1);
+                        let fut = (b.2)(res, &b.1);
                         this.state.set(State::B { fut });
                         self.poll(cx)
                     } else {

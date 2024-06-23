@@ -14,6 +14,7 @@ use super::decoder::{PayloadDecoder, PayloadItem, PayloadType};
 use super::{decoder, encoder, reserve_readbuf, Message, MessageType};
 
 bitflags! {
+    #[derive(Debug, Clone, Copy)]
     struct Flags: u8 {
         const HEAD              = 0b0000_0001;
         const KEEPALIVE_ENABLED = 0b0000_1000;

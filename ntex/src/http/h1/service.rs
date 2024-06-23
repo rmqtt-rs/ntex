@@ -191,7 +191,7 @@ mod rustls {
         > {
             pipeline_factory(
                 Acceptor::new(config)
-                    .timeout((self.handshake_timeout as u64) * 1000)
+                    .timeout(self.handshake_timeout * 1000)
                     .map_err(SslError::Ssl)
                     .map_init_err(|_| panic!()),
             )
@@ -425,11 +425,7 @@ where
     }
 
     fn call(&self, (io, addr): Self::Request) -> Self::Future {
-        let on_connect = if let Some(ref on_connect) = self.on_connect {
-            Some(on_connect(&io))
-        } else {
-            None
-        };
+        let on_connect = self.on_connect.as_ref().map(|on_connect| on_connect(&io));
 
         Dispatcher::new(io, self.config.clone(), addr, on_connect)
     }

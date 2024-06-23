@@ -227,7 +227,7 @@ where
 }
 
 pin_project_lite::pin_project! {
-    pub struct MapConfigServiceResponse<A, M: ServiceFactory, C>
+    pub struct MapConfigServiceResponse<A, M, C>
     where
         A: ServiceFactory,
         M: ServiceFactory,
