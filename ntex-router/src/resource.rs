@@ -101,7 +101,7 @@ impl ResourceDef {
         let mut elements = Vec::new();
 
         for path in set {
-            p = path.clone();
+            p.clone_from(&path);
             let (pelems, elems) = ResourceDef::parse(&path);
             tp.push(pelems);
             elements = elems;
@@ -159,7 +159,7 @@ impl ResourceDef {
         let mut elements = Vec::new();
 
         for path in patterns {
-            p = path.clone();
+            p.clone_from(&path);
             let (pelems, elems) = ResourceDef::parse(&path);
             tp.push(pelems);
             elements = elems;
