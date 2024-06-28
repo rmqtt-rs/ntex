@@ -16,7 +16,7 @@ name = "ntex_util"
 path = "src/lib.rs"
 
 [dependencies]
-bitflags = "2.5"
+bitflags = "2.6"
 slab = "0.4"
 futures-core = { version = "0.3", default-features = false, features = ["alloc"] }
 futures-sink = { version = "0.3", default-features = false, features = ["alloc"] }

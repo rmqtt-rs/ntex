@@ -10,6 +10,14 @@ members = [
   "ntex-util",
 ]
 
+[workspace.lints.rust]
+dead_code = "allow"
+
+[workspace.lints.clippy]
+enum_variant_names = "allow"
+uninit_assumed_init = "allow"
+never_loop = "allow"
+
 [patch.crates-io]
 ntex = { path = "ntex" }
 ntex-codec = { path = "ntex-codec" }

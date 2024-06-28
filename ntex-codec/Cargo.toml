@@ -16,7 +16,7 @@ name = "ntex_codec"
 path = "src/lib.rs"
 
 [dependencies]
-bitflags = "2.5"
+bitflags = "2.6"
 bytes = "1.6"
 ntex-util = "0.1.1"
 log = "0.4"
