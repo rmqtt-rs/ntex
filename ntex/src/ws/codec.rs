@@ -59,6 +59,7 @@ pub struct Codec {
 }
 
 bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy)]
     struct Flags: u8 {
         const SERVER         = 0b0000_0001;
         const R_CONTINUATION = 0b0000_0010;

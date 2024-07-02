@@ -4,6 +4,7 @@ use std::{convert::TryFrom, fmt, net::SocketAddr, rc::Rc, str};
 #[cfg(feature = "cookie")]
 use coo_kie::{Cookie, CookieJar};
 use nanorand::{WyRand, Rng};
+use base64::prelude::{Engine, BASE64_STANDARD};
 
 use crate::codec::{AsyncRead, AsyncWrite, Framed};
 use crate::framed::{DispatchItem, Dispatcher, State};
@@ -206,7 +207,7 @@ impl WsRequest {
             Some(password) => format!("{}:{}", username, password),
             None => format!("{}:", username),
         };
-        self.header(AUTHORIZATION, format!("Basic {}", base64::encode(&auth)))
+        self.header(AUTHORIZATION, format!("Basic {}", BASE64_STANDARD.encode(auth)))
     }
 
     /// Set HTTP bearer authentication header
@@ -297,7 +298,7 @@ impl WsRequest {
         // when decoded, is 16 bytes in length (RFC 6455)
         let mut sec_key: [u8; 16] = [0; 16];
         WyRand::new().fill(&mut sec_key);
-        let key = base64::encode(&sec_key);
+        let key = BASE64_STANDARD.encode(sec_key);
 
         self.head.headers.insert(
             header::SEC_WEBSOCKET_KEY,

@@ -9,6 +9,7 @@ use crate::task::LocalWaker;
 use crate::util::{poll_fn, Buf, BytesMut, Either};
 
 bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy)]
     pub struct Flags: u16 {
         const DSP_STOP       = 0b0000_0000_0001;
         const DSP_KEEPALIVE  = 0b0000_0000_0010;
@@ -408,7 +409,7 @@ impl State {
                         crate::codec::poll_read_buf(
                             Pin::new(&mut *io),
                             cx,
-                            &mut *st.read_buf.borrow_mut(),
+                            &mut st.read_buf.borrow_mut(),
                         )
                     })
                     .await
@@ -470,7 +471,7 @@ impl State {
             return match codec.decode(&mut buf) {
                 Ok(Some(el)) => Poll::Ready(Ok(Some(el))),
                 Ok(None) => {
-                    match crate::codec::poll_read_buf(Pin::new(&mut *io), cx, &mut *buf)
+                    match crate::codec::poll_read_buf(Pin::new(&mut *io), cx, &mut buf)
                     {
                         Poll::Pending => Poll::Pending,
                         Poll::Ready(Err(err)) => Poll::Ready(Err(Either::Right(err))),
@@ -699,7 +700,7 @@ impl<'a> Write<'a> {
             }
 
             // encode item and wake write task
-            codec.encode(item, &mut *write_buf).map(|_| {
+            codec.encode(item, &mut write_buf).map(|_| {
                 if is_write_sleep {
                     self.0.write_task.wake();
                 }

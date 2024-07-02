@@ -49,15 +49,15 @@ impl fmt::Display for Listener {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Listener::Tcp(ref lst) => {
-                if let Some(addr) = lst.local_addr().ok() {
-                    write!(f, "{}", addr.to_string())
+                if let Ok(addr) = lst.local_addr() {
+                    write!(f, "{}", addr)
                 } else {
                     write!(f, "")
                 }
             }
             #[cfg(unix)]
             Listener::Uds(ref lst) => {
-                if let Some(addr) = lst.local_addr().ok() {
+                if let Ok(addr) = lst.local_addr() {
                     write!(f, "{:?}", addr)
                 } else {
                     write!(f, "")
@@ -237,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(unix))]
+    #[cfg(unix)]
     fn uds() {
         use std::os::unix::net::UnixListener;
 

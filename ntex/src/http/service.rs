@@ -282,7 +282,7 @@ mod openssl {
 #[cfg(feature = "rustls")]
 mod rustls {
     use super::*;
-    use crate::server::rustls::{Acceptor, ServerConfig, Session, TlsStream};
+    use crate::server::rustls::{Acceptor, ServerConfig, TlsStream};
     use crate::server::SslError;
 
     impl<S, B, X, U> HttpService<TlsStream<TcpStream>, S, B, X, U>
@@ -321,11 +321,11 @@ mod rustls {
             InitError = (),
         > {
             let protos = vec!["h2".to_string().into(), "http/1.1".to_string().into()];
-            config.set_protocols(&protos);
+            config.alpn_protocols = protos;
 
             pipeline_factory(
                 Acceptor::new(config)
-                    .timeout((self.cfg.0.ssl_handshake_timeout as u64) * 1000)
+                    .timeout(self.cfg.0.ssl_handshake_timeout * 1000)
                     .map_err(SslError::Ssl)
                     .map_init_err(|_| panic!()),
             )
@@ -333,7 +333,7 @@ mod rustls {
                 let proto = io
                     .get_ref()
                     .1
-                    .get_alpn_protocol()
+                    .alpn_protocol()
                     .and_then(|protos| {
                         if protos.windows(2).any(|window| window == b"h2") {
                             Some(Protocol::Http2)
@@ -509,11 +509,7 @@ where
             proto,
             peer_addr
         );
-        let on_connect = if let Some(ref on_connect) = self.on_connect {
-            Some(on_connect(&io))
-        } else {
-            None
-        };
+        let on_connect = self.on_connect.as_ref().map(|on_connect| on_connect(&io));
 
         match proto {
             Protocol::Http2 => HttpServiceHandlerResponse {

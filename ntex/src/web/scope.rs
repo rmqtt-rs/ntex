@@ -213,7 +213,7 @@ where
         self.external.extend(cfg.external);
 
         if !cfg.data.is_empty() {
-            let mut data = self.data.unwrap_or_else(Extensions::new);
+            let mut data = self.data.unwrap_or_default();
 
             for value in cfg.data.iter() {
                 value.create(&mut data);
@@ -674,7 +674,7 @@ impl<Err: ErrorRenderer> ServiceFactory for ScopeEndpoint<Err> {
         let mut factory_borrow = self.factory.borrow_mut();
         match factory_borrow.as_mut() {
             Some(factory) => factory.new_service(()),
-            None => return Box::pin(async { Err(()) }),
+            None => Box::pin(async { Err(()) }),
         }
     }
 }

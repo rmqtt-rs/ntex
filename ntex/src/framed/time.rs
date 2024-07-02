@@ -56,7 +56,7 @@ impl Timer {
             inner
                 .notifications
                 .entry(expire)
-                .or_insert_with(HashSet::default)
+                .or_default()
                 .insert(state.clone());
         }
 

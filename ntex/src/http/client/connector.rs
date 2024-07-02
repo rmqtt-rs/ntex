@@ -1,4 +1,6 @@
 use std::{rc::Rc, task::Context, task::Poll, time::Duration};
+#[cfg(feature = "rustls")]
+use rust_tls::RootCertStore;
 
 use crate::codec::{AsyncRead, AsyncWrite};
 use crate::connect::{Connect as TcpConnect, Connector as TcpConnector};
@@ -84,11 +86,18 @@ impl Connector {
         #[cfg(all(not(feature = "openssl"), feature = "rustls"))]
         {
             let protos = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-            let mut config = ClientConfig::new();
-            config.set_protocols(&protos);
-            config
-                .root_store
-                .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+            // let mut config = ClientConfig::new();
+            // config.set_protocols(&protos);
+            // config
+            //     .root_store
+            //     .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+            // conn.rustls(Arc::new(config))
+            let cert_store =
+                RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            let mut config = ClientConfig::builder()
+                .with_root_certificates(cert_store)
+                .with_no_client_auth();
+            config.alpn_protocols = protos;
             conn.rustls(Arc::new(config))
         }
         #[cfg(not(any(feature = "openssl", feature = "rustls")))]
@@ -129,14 +138,14 @@ impl Connector {
     #[cfg(feature = "rustls")]
     /// Use rustls connector for secured connections.
     pub fn rustls(self, connector: Arc<ClientConfig>) -> Self {
-        use crate::connect::rustls::{RustlsConnector, Session};
+        use crate::connect::rustls::RustlsConnector;
 
         const H2: &[u8] = b"h2";
         self.secure_connector(RustlsConnector::new(connector).map(|sock| {
             let h2 = sock
                 .get_ref()
                 .1
-                .get_alpn_protocol()
+                .alpn_protocol()
                 .map(|protos| protos.windows(2).any(|w| w == H2))
                 .unwrap_or(false);
             if h2 {

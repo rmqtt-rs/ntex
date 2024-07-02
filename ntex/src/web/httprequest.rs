@@ -200,7 +200,7 @@ impl HttpRequest {
     /// borrowed.
     #[inline]
     pub fn connection_info(&self) -> Ref<'_, ConnectionInfo> {
-        ConnectionInfo::get(self.head(), &*self.app_config())
+        ConnectionInfo::get(self.head(), self.app_config())
     }
 
     /// App config
@@ -219,7 +219,7 @@ impl HttpRequest {
     /// ```
     pub fn app_data<T: 'static>(&self) -> Option<&T> {
         if let Some(st) = self.0.app_data.get::<T>() {
-            Some(&st)
+            Some(st)
         } else {
             None
         }
@@ -322,11 +322,7 @@ impl HttpRequestPool {
     /// Get message from the pool
     #[inline]
     pub(crate) fn get_request(&self) -> Option<HttpRequest> {
-        if let Some(inner) = self.0.borrow_mut().pop() {
-            Some(HttpRequest(inner))
-        } else {
-            None
-        }
+        self.0.borrow_mut().pop().map(HttpRequest)
     }
 
     pub(crate) fn clear(&self) {
@@ -337,9 +333,7 @@ impl HttpRequestPool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http::{header, StatusCode};
-    use crate::router::ResourceDef;
-    use crate::web::dev::ResourceMap;
+    use crate::http::StatusCode;
     use crate::web::test::{call_service, init_service, TestRequest};
     use crate::web::{self, App, HttpResponse};
 

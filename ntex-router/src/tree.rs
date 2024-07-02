@@ -5,7 +5,7 @@ use super::path::PathItem;
 use super::resource::{ResourceDef, Segment};
 use super::{Resource, ResourcePath};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct Tree {
     key: Vec<Segment>,
     value: Vec<Value>,
@@ -34,16 +34,6 @@ impl Value {
             Value::Slesh(v) => *v,
             Value::Prefix(v) => *v,
             Value::PrefixSlesh(v) => *v,
-        }
-    }
-}
-
-impl Default for Tree {
-    fn default() -> Tree {
-        Tree {
-            key: Vec::new(),
-            value: Vec::new(),
-            children: Vec::new(),
         }
     }
 }
@@ -254,7 +244,7 @@ impl Tree {
             let res = self
                 .children
                 .iter()
-                .map(|x| {
+                .filter_map(|x| {
                     x.find_inner_wrapped(
                         path,
                         resource,
@@ -265,7 +255,6 @@ impl Tree {
                         base_skip,
                     )
                 })
-                .filter_map(|x| x)
                 .next();
 
             return if let Some((val, skip)) = res {
@@ -411,7 +400,7 @@ impl Tree {
                     if let Some(captures) = pattern.captures(seg) {
                         let mut is_match = true;
                         for name in names.iter() {
-                            if let Some(m) = captures.name(&name) {
+                            if let Some(m) = captures.name(name) {
                                 let item = if quoted {
                                     PathItem::Segment(m.as_str().to_string())
                                 } else {
@@ -508,7 +497,7 @@ impl Tree {
                                         if let Some(res) = self
                                             .children
                                             .iter()
-                                            .map(|x| {
+                                            .filter_map(|x| {
                                                 x.find_inner_wrapped(
                                                     p,
                                                     resource,
@@ -519,7 +508,6 @@ impl Tree {
                                                     base_skip,
                                                 )
                                             })
-                                            .filter_map(|x| x)
                                             .next()
                                         {
                                             return Some(res);
@@ -548,7 +536,7 @@ impl Tree {
                     return self
                         .children
                         .iter()
-                        .map(|x| {
+                        .filter_map(|x| {
                             x.find_inner_wrapped(
                                 path,
                                 resource,
@@ -559,7 +547,6 @@ impl Tree {
                                 base_skip,
                             )
                         })
-                        .filter_map(|x| x)
                         .next();
                 } else {
                     path = &path[idx + 1..];

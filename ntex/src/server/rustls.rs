@@ -3,7 +3,7 @@ use std::{error::Error, future::Future, io, marker, pin::Pin, sync::Arc, time};
 
 use tokio_rustls::{Accept, TlsAcceptor};
 
-pub use rust_tls::{ServerConfig, Session};
+pub use rust_tls::ServerConfig;
 pub use tokio_rustls::server::TlsStream;
 pub use webpki_roots::TLS_SERVER_ROOTS;
 

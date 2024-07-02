@@ -11,17 +11,13 @@ use super::{h1, h2 as h2d};
 pub type PayloadStream = Pin<Box<dyn Stream<Item = Result<Bytes, PayloadError>>>>;
 
 /// Type represent streaming payload
+#[derive(Default)]
 pub enum Payload {
+    #[default]
     None,
     H1(h1::Payload),
     H2(h2d::Payload),
     Stream(PayloadStream),
-}
-
-impl Default for Payload {
-    fn default() -> Self {
-        Payload::None
-    }
 }
 
 impl From<h1::Payload> for Payload {

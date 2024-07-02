@@ -1,6 +1,8 @@
 use std::convert::{From, Into};
 use std::fmt;
 
+use base64::prelude::{Engine, BASE64_STANDARD};
+
 use self::OpCode::*;
 /// Operation codes as part of rfc6455.
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
@@ -211,7 +213,7 @@ pub fn hash_key(key: &[u8]) -> String {
     hasher.update(key);
     hasher.update(WS_GUID.as_bytes());
 
-    base64::encode(&hasher.finalize()[..])
+    BASE64_STANDARD.encode(&hasher.finalize()[..])
 }
 
 #[cfg(test)]

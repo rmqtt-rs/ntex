@@ -14,6 +14,7 @@ pub fn new<T>() -> Pool<T> {
 pub struct Pool<T>(Cell<Slab<Inner<T>>>);
 
 bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy)]
     struct Flags: u8 {
         const SENDER = 0b0000_0001;
         const RECEIVER = 0b0000_0010;

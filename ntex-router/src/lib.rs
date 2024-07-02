@@ -41,7 +41,7 @@ impl<'a> ResourcePath for &'a str {
 
 impl ResourcePath for bytestring::ByteString {
     fn path(&self) -> &str {
-        &*self
+        self
     }
 }
 

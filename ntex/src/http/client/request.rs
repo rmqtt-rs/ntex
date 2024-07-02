@@ -3,7 +3,7 @@ use std::{convert::TryFrom, error::Error, fmt, net, rc::Rc, time::Duration};
 use bytes::Bytes;
 use futures_core::Stream;
 use serde::Serialize;
-
+use base64::prelude::{Engine, BASE64_STANDARD};
 #[cfg(feature = "cookie")]
 use coo_kie::{Cookie, CookieJar};
 
@@ -258,7 +258,7 @@ impl ClientRequest {
         };
         self.header(
             header::AUTHORIZATION,
-            format!("Basic {}", base64::encode(&auth)),
+            format!("Basic {}", BASE64_STANDARD.encode(auth)),
         )
     }
 
@@ -534,7 +534,7 @@ impl ClientRequest {
             if https {
                 slf = slf.set_header_if_none(header::ACCEPT_ENCODING, HTTPS_ENCODING)
             } else {
-                #[cfg(any(feature = "compress"))]
+                #[cfg(feature = "compress")]
                 {
                     slf =
                         slf.set_header_if_none(header::ACCEPT_ENCODING, "gzip, deflate")

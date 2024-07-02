@@ -9,19 +9,19 @@ repository = "https://github.com/ntex-rs/ntex.git"
 documentation = "https://docs.rs/ntex-codec/"
 categories = ["network-programming", "asynchronous"]
 license = "MIT"
-edition = "2018"
+edition = "2021"
 
 [lib]
 name = "ntex_codec"
 path = "src/lib.rs"
 
 [dependencies]
-bitflags = "1.2.1"
-bytes = "1.0"
-ntex-util = "0.1.0"
+bitflags = "2.6"
+bytes = "1.6"
+ntex-util = "0.1.1"
 log = "0.4"
 tokio = { version = "1", default-features = false }
 
 [dev-dependencies]
-ntex = "0.3.13"
-futures = "0.3.13"
+ntex = "0.3.22"
+futures = "0.3"

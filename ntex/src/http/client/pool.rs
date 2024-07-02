@@ -275,7 +275,7 @@ where
         self.acquired -= 1;
         self.available
             .entry(key.clone())
-            .or_insert_with(VecDeque::new)
+            .or_default()
             .push_back(AvailableConnection {
                 io,
                 created,

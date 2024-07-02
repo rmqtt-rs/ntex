@@ -35,7 +35,7 @@ pub use self::socket::FromStream;
 
 /// Socket id token
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(self) struct Token(usize);
+struct Token(usize);
 
 impl Token {
     pub(self) fn next(&mut self) -> Token {
@@ -61,8 +61,8 @@ pub fn max_concurrent_ssl_accept(num: usize) {
 }
 
 #[allow(dead_code)]
-pub(self) const ZERO: std::time::Duration = std::time::Duration::from_millis(0);
-pub(self) static MAX_SSL_ACCEPT: AtomicUsize = AtomicUsize::new(256);
+const ZERO: std::time::Duration = std::time::Duration::from_millis(0);
+static MAX_SSL_ACCEPT: AtomicUsize = AtomicUsize::new(256);
 
 thread_local! {
     static MAX_SSL_ACCEPT_COUNTER: Counter = Counter::new(MAX_SSL_ACCEPT.load(Ordering::Relaxed));

@@ -20,6 +20,7 @@ pub enum ConnectionType {
 }
 
 bitflags! {
+    #[derive(Debug)]
     pub(crate) struct Flags: u8 {
         const CLOSE       = 0b0000_0001;
         const KEEP_ALIVE  = 0b0000_0010;
@@ -185,7 +186,7 @@ impl RequestHeadType {
 impl AsRef<RequestHead> for RequestHeadType {
     fn as_ref(&self) -> &RequestHead {
         match self {
-            RequestHeadType::Owned(head) => &head,
+            RequestHeadType::Owned(head) => head,
             RequestHeadType::Rc(head, _) => head.as_ref(),
         }
     }
@@ -369,7 +370,7 @@ impl<T: Head> std::ops::Deref for Message<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.head.as_ref()
+        self.head.as_ref()
     }
 }
 
