@@ -20,4 +20,3 @@ ntex-util = "0.1.1"
 pin-project-lite = "0.2"
 
 [dev-dependencies]
-ntex = "0.3.22"

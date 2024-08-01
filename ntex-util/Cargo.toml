@@ -23,4 +23,3 @@ futures-sink = { version = "0.3", default-features = false, features = ["alloc"]
 pin-project-lite = "0.2"
 
 [dev-dependencies]
-ntex = "0.3.22"
